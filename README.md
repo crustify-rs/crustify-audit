@@ -60,6 +60,25 @@ The bug this tool was built after holds its exclusive reference directly and
 reaches its shared one a level down through another struct; a direct-fields-only
 check misses it entirely.
 
+## Triage
+
+`ub` writes two files. `advisory.md` is the agent's claim; `verification.md` is
+the harness re-running its evidence without asking it.
+
+Two questions per candidate:
+
+| | who answers | if no |
+|---|---|---|
+| 1. Did the reproduction actually fail? | **the harness** — it re-ran every one under Miri | discard |
+| 2. Does the reproduction match the real code? | **you** — the harness prints the cited source line beside the claim | discard |
+
+Survives both → real.
+
+Question 1 is free and catches fabricated tool output, reproductions that do not
+fail, and any edit to the audited tree. Question 2 is a diff, not an
+investigation — but no checker can do it, because "is this reduction faithful to
+that line?" is reading.
+
 ## Instruments
 
 Miri and the sanitizers answer different questions, and the agent picks:
