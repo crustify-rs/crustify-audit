@@ -67,10 +67,12 @@ class AuditAgent:
         *,
         model: str | None = None,
         focus: str | None = None,
+        timeout_s: int | None = None,
     ) -> None:
         self.layout = layout
         self.model = model or self.model
         self.focus = focus
+        self.timeout_s = timeout_s
 
     # ------------------------------------------------------------------ run
 
@@ -111,6 +113,7 @@ class AuditAgent:
                 system_preamble=self.system_preamble(),
                 work_dir=str(self.layout.scratch),
                 log=log,
+                timeout_s=self.timeout_s,
             )
         return out if out.is_file() else None
 

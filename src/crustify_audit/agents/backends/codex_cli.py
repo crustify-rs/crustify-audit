@@ -20,13 +20,16 @@ _BASE = (
 
 class CodexCliBackend:
     def run(self, *, name, model, prompt_template, arguments,
-            system_preamble, work_dir, log: AgentLog) -> None:
+            system_preamble, work_dir, log: AgentLog,
+            timeout_s: int | None = None) -> None:
         if shutil.which("codex") is None:
             raise SystemExit(
                 "the `codex` CLI is not on PATH. Install it, or pick an "
                 "anthropic model to drive the claude backend instead.")
         prompt = prompt_template.format(**arguments)
-        cmd = [
+        cmd = ["timeout", "--signal=TERM", "--kill-after=30", f"{timeout_s}s"] \
+            if timeout_s else []
+        cmd += [
             "codex", "exec",
             "--dangerously-bypass-approvals-and-sandbox",
             "-m", model,

@@ -28,6 +28,7 @@ class Backend(Protocol):
         system_preamble: str,
         work_dir: str,
         log: AgentLog,
+        timeout_s: int | None = None,
     ) -> None:
         """Drive one agent to completion.
 
@@ -37,8 +38,14 @@ class Backend(Protocol):
         replace, so each backend places the same string its own way and the
         content never diverges.
 
-        The return value is intentionally unused: success is judged by the
-        on-disk findings file, not by an exit code the agent controls.
+        ``timeout_s`` is a WALL-CLOCK ceiling. It is the only cap that works
+        under subscription auth: `--max-budget-usd` meters API-call spend, of
+        which there is none, and this CLI has no turn limit. A killed agent may
+        have written a partial advisory or none at all, which the caller has to
+        report honestly rather than treat as "found nothing".
+
+        The return value is intentionally unused: success is judged by what is
+        on disk, not by an exit code the agent controls.
         """
         ...
 

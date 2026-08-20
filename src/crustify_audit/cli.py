@@ -78,6 +78,16 @@ def build_parser() -> argparse.ArgumentParser:
                         "provider prefix selects the backend and is mandatory.")
     h.add_argument("--focus", default=None, metavar="TEXT",
                    help="Narrow the hunt, e.g. 'the format module' or 'iterators'.")
+    h.add_argument("--timeout", type=int, default=30, metavar="MINUTES",
+                   dest="timeout",
+                   help="Wall-clock ceiling; the agent is terminated after this "
+                        "(default 30, 0 disables). This is the ONLY cap that "
+                        "works under subscription auth — `--max-budget-usd` "
+                        "meters API-call spend, of which there is none, and the "
+                        "CLI has no turn limit. A terminated agent may have "
+                        "written a partial advisory or none: absence of an "
+                        "advisory after a timeout does NOT mean it found "
+                        "nothing.")
     return p
 
 
@@ -107,7 +117,8 @@ def _cmd_ub(layout: Layout, args) -> int:
               "so the agent cannot check its own reproductions. Install with: "
               "rustup component add miri --toolchain nightly",
               file=sys.stderr)
-    agent = AuditAgent(layout, model=args.model, focus=args.focus)
+    agent = AuditAgent(layout, model=args.model, focus=args.focus,
+                       timeout_s=(args.timeout * 60) or None)
     notes = agent.run()
     if notes is None:
         print("[crustify-audit] the agent left no notes — it did not finish. "
