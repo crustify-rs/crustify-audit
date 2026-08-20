@@ -115,12 +115,16 @@ class AuditAgent:
         return (_PKG_ROOT / "prompts" / "ub.md").read_text()
 
     def _arguments(self) -> dict:
+        inst = self.instruments(self.layout)
+        have = ", ".join(k for k, v in inst.items() if v) or "none detected"
+        missing = ", ".join(k for k, v in inst.items() if not v)
         return {
             "workspace": str(self.layout.workspace),
             "scan_json": str(self.layout.scan),
             "advisory": str(self.layout.advisory),
             "scratch": str(self.layout.scratch),
             "focus": self.focus or "(none — work the seed in rank order)",
+            "instruments": have + (f"    (not detected: {missing})" if missing else ""),
         }
 
     def system_preamble(self) -> str:
@@ -139,14 +143,45 @@ class AuditAgent:
             "your scratch directory. You are a reader everywhere else."
         )
 
-    # ------------------------------------------------------------ verify
+    # ------------------------------------------------------- instruments
 
     @staticmethod
-    def miri_available() -> bool:
-        if shutil.which("cargo") is None:
+    def _ok(cmd: list[str]) -> bool:
+        try:
+            return subprocess.run(cmd, capture_output=True, text=True).returncode == 0
+        except OSError:
             return False
-        r = subprocess.run(
-            ["cargo", "+nightly", "miri", "--version"],
-            capture_output=True, text=True,
-        )
-        return r.returncode == 0
+
+    @classmethod
+    def miri_available(cls) -> bool:
+        return shutil.which("cargo") is not None and cls._ok(
+            ["cargo", "+nightly", "miri", "--version"])
+
+    @classmethod
+    def instruments(cls, layout: Layout) -> dict[str, bool]:
+        """What is actually installed, so the prompt can say so.
+
+        Mechanism, not judgement: this reports availability and stops there.
+        WHICH instrument suits a given candidate is the agent's call, and the
+        prompt describes what each one is good for rather than prescribing an
+        order. Telling an agent "miri is not installed" is useful; telling it
+        "therefore use ASan" would be the harness deciding again.
+        """
+        cargo = shutil.which("cargo") is not None
+        nightly = cargo and cls._ok(["cargo", "+nightly", "--version"])
+        return {
+            "cargo": cargo,
+            "nightly": nightly,
+            "miri": cls.miri_available(),
+            # Sanitizers are nightly + an explicit --target (so build scripts and
+            # proc macros are not instrumented). Presence of nightly is the best
+            # cheap proxy; whether the crate actually LINKS under them depends on
+            # its C dependencies and can only be found out by trying.
+            "sanitizers": nightly,
+            # The one that decides whether sanitizers are usable at all: they
+            # instrument code that RUNS, so without a build there is nothing to
+            # instrument. Deliberately not a hard check -- `cargo build` on a
+            # crate needing system libraries can take minutes and fail for
+            # reasons that are not the agent's problem.
+            "builds": (layout.workspace / "Cargo.lock").is_file(),
+        }

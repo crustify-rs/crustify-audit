@@ -6,6 +6,7 @@ Deterministic scan:    `{scan_json}`
 Your scratch dir:      `{scratch}`   (the ONLY place you may write)
 Write your advisory:   `{advisory}`
 Focus:                 `{focus}`
+Instruments available: `{instruments}`
 
 ## What counts
 
@@ -58,7 +59,13 @@ Reduce rather than copy: mirror the real types and field layout and drop the
 rest. Do not depend on the audited crate; it likely needs system libraries you
 do not have, and a reproduction nobody can run is not evidence.
 
-Miri is how you check yourself:
+## Instruments
+
+Pick what fits the bug. They answer different questions and have different
+blind spots; nothing here is a required sequence.
+
+**Miri — verification.** You have a hypothesis, you reduced it, Miri rules on
+it:
 
 ```
 cargo +nightly miri run
@@ -68,10 +75,50 @@ MIRIFLAGS=-Zmiri-tree-borrows cargo +nightly miri run
 Run both. Stacked Borrows is still experimental — Miri says so itself — so a
 finding Tree Borrows also rejects is far harder to argue with.
 
+Miri's blind spot is the one that matters most here: **it cannot execute C.**
+It stops at every `extern "C"` call, which for a wrapper crate is exactly where
+the interesting behaviour lives. `-Zmiri-native-lib` partially bridges this but
+is experimental, Unix-only and documented as fragile — treat a result through it
+as a lead, not proof.
+
+**Sanitizers — discovery.** Different role: you do not need a hypothesis first,
+you run real code and see what fires. This is how you reach UB on the *C* side
+of the seam that Miri cannot see.
+
+```
+RUSTFLAGS="-Zsanitizer=address" cargo +nightly test --target x86_64-unknown-linux-gnu
+```
+
+The explicit `--target` is not optional — without it build scripts and proc
+macros get instrumented too. ASan catches use-after-free, double-free, buffer
+overflow and invalid free across the boundary; LSan catches leaks; TSan catches
+races if the crate has concurrent tests. For UB *inside* the C library — integer
+overflow, misalignment, bad shifts and casts — the C dependency itself has to be
+rebuilt with `-fsanitize=undefined`, which is only worth attempting when it
+builds from source rather than coming from the system.
+
+Two things to know before spending time here. Sanitizers need the crate to
+**build**, which for an FFI wrapper means its system dependencies must be
+present — often they are not, and that is not a failure on your part. And they
+only report code that actually **runs**, so they need a workload: the crate's
+own test suite, or an example, or something you write that genuinely calls into
+C. A sanitizer run over a reduction that never crosses the FFI boundary tells
+you nothing.
+
+If an instrument you want is missing from the list above, say so in the advisory
+rather than working around it silently — "this was checked under Miri but not
+under ASan" is information the reader needs.
+
+## When the evidence disagrees with you
+
 If Miri accepts your reproduction, either the reduction is wrong or the finding
 is not real. Fix the reduction once. If it still passes, either drop the finding
 or say plainly in the advisory that you could not demonstrate it and why. Do not
 present it as confirmed.
+
+A sanitizer that fires inside the C library is a finding about **that library**,
+not about the Rust wrapper — unless the wrapper is what fed it the bad
+arguments. Be careful which one you are reporting, and to whom.
 
 ## Before you write
 
@@ -89,7 +136,8 @@ land, from experience:
 - It is a **soundness** report, not a vulnerability disclosure. Say so, and do
   not imply exploitability you have not shown.
 - The path from safe code is the whole argument. Lead with it.
-- Quote the Miri output verbatim. Paraphrased evidence is not evidence.
+- Quote tool output verbatim — Miri, ASan, whatever you ran. Paraphrased
+  evidence is not evidence, and say which instrument produced each result.
 - Include the reproductions inline, or point at their paths under `{scratch}`.
 - Be honest about what you did *not* check, and about the limits of your
   reproductions.

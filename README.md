@@ -7,7 +7,7 @@ Two halves, and the split is the point:
 | | | |
 |---|---|---|
 | `unsafe` | **deterministic** | a `syn` pass over the crate's unsafe surface. Counts, plus a ranked list of sites worth a closer look. No LLM, no network, no build. Same tree, same bytes. |
-| `ub` | **agentic** | one agent over that seed, hunting undefined behaviour reachable from safe code — and authoring the advisory itself. |
+| `ub` | **agentic** | one agent over that seed, hunting undefined behaviour reachable from safe code — choosing its own instruments and authoring the advisory itself. |
 
 Separate verbs, not one command with a flag, so a caller always knows whether
 the answer in front of them is reproducible.
@@ -59,6 +59,29 @@ Mixed-reference structs are resolved **transitively**, which is load-bearing.
 The bug this tool was built after holds its exclusive reference directly and
 reaches its shared one a level down through another struct; a direct-fields-only
 check misses it entirely.
+
+## Instruments
+
+Miri and the sanitizers answer different questions, and the agent picks:
+
+| | role | reaches | needs |
+|---|---|---|---|
+| **Miri** | verification — rules on a reduction you already have | Rust-side UB: aliasing under Stacked *and* Tree Borrows, invalid values, uninit, alignment | nothing built |
+| **ASan / LSan** | discovery — run real code, see what fires | use-after-free, double-free, overflow, leaks **across** the FFI seam | a working build **and** a workload |
+| **UBSan** | discovery | integer overflow, misalignment, bad shifts and casts *inside* the C library | the C dep rebuilt with `-fsanitize=undefined` |
+| **TSan** | discovery | data races across the boundary | build + concurrent tests |
+
+The split matters because **Miri cannot execute C**. It stops at every
+`extern "C"` call — which, for a wrapper crate, is where the interesting
+behaviour lives. `-Zmiri-native-lib` partially bridges it but is experimental,
+Unix-only and fragile. Sanitizers are how you see the other side of the seam.
+
+The cost is that sanitizers need the crate to *build*, which for an FFI wrapper
+means its system dependencies must be present — often the reason a crate is
+worth auditing is the reason you cannot build it. And they only report code that
+runs, so they need the crate's own tests as a workload. `unsafe` deliberately
+needs no build at all; `ub` uses whatever happens to be available and is asked
+to say in the advisory what it could not check.
 
 ## Where the line sits
 
