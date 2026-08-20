@@ -72,15 +72,11 @@ When there *is* an advisory, two questions per finding:
 
 | | who answers | if no |
 |---|---|---|
-| 1. Did the reproduction actually fail? | **the harness** — `verification.md` re-ran every one under Miri | discard |
-| 2. Does the reproduction match the real code? | **you** — the harness prints the cited source line beside the claim | discard |
+| 1. Does the reproduction actually fail? | `cd` into it and run `cargo +nightly miri run` | discard |
+| 2. Does the reproduction match the real code? | read it against the source line it cites | discard |
 
-Survives both → real.
-
-Question 1 is free and catches fabricated tool output, reproductions that do not
-fail, and any edit to the audited tree. Question 2 is a diff, not an
-investigation — but no checker can do it, because "is this reduction faithful to
-that line?" is reading.
+Survives both → real. Both are a couple of minutes, and you only reach them
+when an advisory exists at all.
 
 Question 2 disappears entirely for a **Tier A** finding, where the reproduction
 depends on the audited crate and calls its real public API. There is no fidelity

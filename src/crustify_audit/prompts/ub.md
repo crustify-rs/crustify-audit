@@ -151,19 +151,6 @@ If an instrument you want is missing from the list above, say so in the advisory
 rather than working around it silently — "this was checked under Miri but not
 under ASan" is information the reader needs.
 
-## Your evidence will be re-run
-
-After you finish, the harness independently re-runs **every** cargo crate under
-`{scratch}` under both borrow models, resolves every `file.rs:line` you cite
-against the real tree, and fingerprints the audited workspace to confirm you did
-not modify it. All of that lands in a verification report a reader sees next to
-your advisory.
-
-This is not a threat, it is the working arrangement, and it should change how
-you write. Do not quote tool output you did not obtain. Do not describe a
-reproduction you did not run. If a citation is approximate, say so. Anything
-that does not survive the re-run reads as fabrication whether or not it was.
-
 ## The failure mode to watch for in yourself
 
 The dangerous mistake is not inventing a bug outright. It is writing a reduction

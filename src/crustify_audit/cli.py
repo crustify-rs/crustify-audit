@@ -114,10 +114,6 @@ def _cmd_ub(layout: Layout, args) -> int:
               f"Check {layout.logs} for its transcript.", file=sys.stderr)
         return 1
 
-    # Verification runs whenever there is an advisory. With no advisory there
-    # is no claim to check, and re-running an empty scratch dir says nothing.
-    from crustify_audit import verify as _verify
-
     if not layout.advisory.is_file():
         print(f"[crustify-audit] no advisory — nothing demonstrated.")
         print(f"[crustify-audit] what was examined: {notes}")
@@ -126,14 +122,11 @@ def _cmd_ub(layout: Layout, args) -> int:
               "the notes to see what\n  was judged.")
         return 0
 
-    report = _verify.run(layout, getattr(agent, "before", ""))
-    print(f"[crustify-audit] advisory     -> {layout.advisory}")
-    print(f"[crustify-audit] verification -> {report}")
-    print(f"[crustify-audit] notes        -> {notes}")
+    print(f"[crustify-audit] advisory -> {layout.advisory}")
+    print(f"[crustify-audit] notes    -> {notes}")
     print(f"[crustify-audit] reproductions: {layout.scratch}")
-    print("\n  Triage: does verification.md say the reproductions actually "
-          "failed, and\n  does each reproduction match the source line it "
-          "cites? Both yes -> real.")
+    print("\n  Triage: run the reproductions yourself, then check each matches "
+          "the\n  source line it cites. Both hold -> real.")
     return 0
 
 
