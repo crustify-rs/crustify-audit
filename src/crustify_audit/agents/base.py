@@ -93,6 +93,11 @@ class AuditAgent:
         # it exists. What the agent builds in it is the agent's business.
         self.layout.scratch.mkdir(parents=True, exist_ok=True)
 
+        # Taken BEFORE the agent starts, so "did it edit the subject?" is
+        # answerable afterwards rather than trusted.
+        from crustify_audit import verify as _verify
+        self.before = _verify.fingerprint(self.layout.workspace)
+
         from crustify_audit.agents.backends import get_backend
         from crustify_audit.models import resolve as resolve_model
 

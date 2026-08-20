@@ -104,13 +104,24 @@ def _cmd_ub(layout: Layout, args) -> int:
               "so the agent cannot check its own reproductions. Install with: "
               "rustup component add miri --toolchain nightly",
               file=sys.stderr)
-    out = AuditAgent(layout, model=args.model, focus=args.focus).run()
+    agent = AuditAgent(layout, model=args.model, focus=args.focus)
+    out = agent.run()
     if out is None:
         print("[crustify-audit] the agent wrote no advisory. Check "
               f"{layout.logs} for its transcript.", file=sys.stderr)
         return 1
-    print(f"[crustify-audit] advisory -> {out}")
-    print(f"[crustify-audit] its working notes and reproductions: {layout.scratch}")
+
+    # ALWAYS, and never optional. The advisory is one account of what happened;
+    # this is a second one obtained without asking the agent. Triage needs both.
+    from crustify_audit import verify as _verify
+    report = _verify.run(layout, getattr(agent, "before", ""))
+
+    print(f"[crustify-audit] advisory     -> {out}")
+    print(f"[crustify-audit] verification -> {report}")
+    print(f"[crustify-audit] reproductions: {layout.scratch}")
+    print("\n  The advisory is the agent's claim. The verification report is "
+          "the harness\n  re-deriving its evidence independently. Read them "
+          "together — a finding\n  is a candidate until you have.")
     return 0
 
 

@@ -8,6 +8,18 @@ Write your advisory:   `{advisory}`
 Focus:                 `{focus}`
 Instruments available: `{instruments}`
 
+## Finding nothing is a result
+
+Most crates you are pointed at will have no soundness bug you can demonstrate.
+That is the expected outcome for anything well maintained, and an advisory
+saying "I examined these N sites, here is why each is sound, I found nothing"
+is a **complete and valuable answer**. It tells the maintainer their seed sites
+were judged.
+
+There is no quota. Nobody is counting your findings. An empty result costs you
+nothing; a wrong one costs a maintainer their afternoon and costs this tool its
+credibility, which is not yours to spend.
+
 ## What counts
 
 A **soundness bug**: a caller writing no `unsafe` of their own can cause UB.
@@ -108,6 +120,46 @@ you nothing.
 If an instrument you want is missing from the list above, say so in the advisory
 rather than working around it silently — "this was checked under Miri but not
 under ASan" is information the reader needs.
+
+## Your evidence will be re-run
+
+After you finish, the harness independently re-runs **every** cargo crate under
+`{scratch}` under both borrow models, resolves every `file.rs:line` you cite
+against the real tree, and fingerprints the audited workspace to confirm you did
+not modify it. All of that lands in a verification report a reader sees next to
+your advisory.
+
+This is not a threat, it is the working arrangement, and it should change how
+you write. Do not quote tool output you did not obtain. Do not describe a
+reproduction you did not run. If a citation is approximate, say so. Anything
+that does not survive the re-run reads as fabrication whether or not it was.
+
+## The failure mode to watch for in yourself
+
+The dangerous mistake is not inventing a bug outright. It is writing a reduction
+that is **genuinely unsound but does not match the crate** — you add a
+`transmute_copy` the code does not have, or drop a bounds check it does have, or
+model a field as `&mut` that is really a raw pointer. Miri then rejects your
+reduction honestly, and the finding looks verified while being about a program
+nobody wrote.
+
+Guard against it explicitly: for every reduction, quote the real lines it
+reduces and state what you simplified away and why that simplification is
+faithful. If you cannot make that argument, the reduction is not evidence yet.
+
+Two related traps: UB in the reduction's own scaffolding rather than the pattern
+under test, and a reduction that calls an `unsafe fn` incorrectly — which is UB
+by construction and proves nothing about a caller who writes no `unsafe`.
+
+## Argue against yourself
+
+Before you write up any finding, make the strongest case that it is **not** a
+bug. Is the pattern guarded somewhere you did not look? Is the safe path
+actually reachable, or does it require an `unsafe` block you overlooked in the
+caller? Does the crate document the invariant somewhere?
+
+Put that counter-argument in the advisory alongside the finding. A maintainer
+who can see you tried to break your own claim will trust the ones that survived.
 
 ## When the evidence disagrees with you
 
