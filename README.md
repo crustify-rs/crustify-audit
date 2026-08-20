@@ -14,7 +14,7 @@ the answer in front of them is reproducible.
 
 ```sh
 crustify-audit /path/to/crate unsafe
-crustify-audit /path/to/crate ub --model anthropic/claude-opus-4-8
+crustify-audit /path/to/crate ub --model anthropic/claude-opus-5
 ```
 
 There is no `report` verb. The agent writes the advisory; a template the

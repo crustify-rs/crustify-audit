@@ -59,7 +59,7 @@ class AuditAgent:
     stage = "ub"
     #: Default model. Overridden by ``--model``; the provider prefix selects
     #: the backend, so this is the only place a default is stated.
-    model = "anthropic/claude-opus-4-8"
+    model = "anthropic/claude-opus-5"
 
     def __init__(
         self,

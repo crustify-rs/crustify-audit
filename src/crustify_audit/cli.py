@@ -74,7 +74,7 @@ def build_parser() -> argparse.ArgumentParser:
                     "demonstrated. notes.md is the done signal, so a re-run is "
                     "a no-op — delete it to hunt again.")
     h.add_argument("--model", default=None, metavar="PROVIDER/MODEL",
-                   help="e.g. anthropic/claude-opus-4-8, openai/gpt-5.6. The "
+                   help="e.g. anthropic/claude-opus-5, openai/gpt-5.6. The "
                         "provider prefix selects the backend and is mandatory.")
     h.add_argument("--focus", default=None, metavar="TEXT",
                    help="Narrow the hunt, e.g. 'the format module' or 'iterators'.")

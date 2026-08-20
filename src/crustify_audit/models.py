@@ -32,7 +32,7 @@ def resolve(model: str) -> Route:
     if not sep or not model_id:
         raise SystemExit(
             f"model {model!r} must be named <provider>/<model>, e.g. "
-            f"anthropic/claude-opus-4-8, openai/gpt-5.6, "
+            f"anthropic/claude-opus-5, openai/gpt-5.6, "
             f"openrouter/z-ai/glm-4.6. Known providers: "
             f"{', '.join(sorted(_BACKENDS))}.")
     backend = _BACKENDS.get(provider)
