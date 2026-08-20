@@ -62,14 +62,17 @@ check misses it entirely.
 
 ## Triage
 
-`ub` writes two files. `advisory.md` is the agent's claim; `verification.md` is
-the harness re-running its evidence without asking it.
+**No `advisory.md` means nothing was demonstrated.** The agent writes one only
+when it actually crashed something — not when a pattern looks unsound. That is
+the first and cheapest filter: no file, nothing to triage. `notes.md` is always
+written and says what was examined, so a clean audit is distinguishable from an
+agent that died halfway.
 
-Two questions per candidate:
+When there *is* an advisory, two questions per finding:
 
 | | who answers | if no |
 |---|---|---|
-| 1. Did the reproduction actually fail? | **the harness** — it re-ran every one under Miri | discard |
+| 1. Did the reproduction actually fail? | **the harness** — `verification.md` re-ran every one under Miri | discard |
 | 2. Does the reproduction match the real code? | **you** — the harness prints the cited source line beside the claim | discard |
 
 Survives both → real.
@@ -78,6 +81,13 @@ Question 1 is free and catches fabricated tool output, reproductions that do not
 fail, and any edit to the audited tree. Question 2 is a diff, not an
 investigation — but no checker can do it, because "is this reduction faithful to
 that line?" is reading.
+
+Question 2 disappears entirely for a **Tier A** finding, where the reproduction
+depends on the audited crate and calls its real public API. There is no fidelity
+question when the crash happened in their code. Tier A needs the crate to build,
+which for an FFI wrapper often it does not — so most findings are **Tier B**, a
+reduction mirroring the crate's types, and the advisory is required to say which
+it is and to argue the reduction is faithful.
 
 ## Instruments
 

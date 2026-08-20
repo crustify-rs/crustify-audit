@@ -68,8 +68,11 @@ def build_parser() -> argparse.ArgumentParser:
                     "reproductions, checks them under miri, and writes the "
                     "advisory itself — the harness supplies a seed and a "
                     "scratch directory and nothing else. It never writes to the "
-                    "audited workspace. Existence of advisory.md is the done "
-                    "signal, so a re-run is a no-op — delete it to hunt again.")
+                    "audited workspace. It ALWAYS writes notes.md saying what "
+                    "it examined, and writes advisory.md ONLY when it actually "
+                    "crashed something: no advisory means nothing was "
+                    "demonstrated. notes.md is the done signal, so a re-run is "
+                    "a no-op — delete it to hunt again.")
     h.add_argument("--model", default=None, metavar="PROVIDER/MODEL",
                    help="e.g. anthropic/claude-opus-4-8, openai/gpt-5.6. The "
                         "provider prefix selects the backend and is mandatory.")
@@ -105,23 +108,32 @@ def _cmd_ub(layout: Layout, args) -> int:
               "rustup component add miri --toolchain nightly",
               file=sys.stderr)
     agent = AuditAgent(layout, model=args.model, focus=args.focus)
-    out = agent.run()
-    if out is None:
-        print("[crustify-audit] the agent wrote no advisory. Check "
-              f"{layout.logs} for its transcript.", file=sys.stderr)
+    notes = agent.run()
+    if notes is None:
+        print("[crustify-audit] the agent left no notes — it did not finish. "
+              f"Check {layout.logs} for its transcript.", file=sys.stderr)
         return 1
 
-    # ALWAYS, and never optional. The advisory is one account of what happened;
-    # this is a second one obtained without asking the agent. Triage needs both.
+    # Verification runs whenever there is an advisory. With no advisory there
+    # is no claim to check, and re-running an empty scratch dir says nothing.
     from crustify_audit import verify as _verify
-    report = _verify.run(layout, getattr(agent, "before", ""))
 
-    print(f"[crustify-audit] advisory     -> {out}")
+    if not layout.advisory.is_file():
+        print(f"[crustify-audit] no advisory — nothing demonstrated.")
+        print(f"[crustify-audit] what was examined: {notes}")
+        print("\n  The agent writes an advisory only when it actually crashed "
+              "something.\n  Its absence is the result, not a failure — read "
+              "the notes to see what\n  was judged.")
+        return 0
+
+    report = _verify.run(layout, getattr(agent, "before", ""))
+    print(f"[crustify-audit] advisory     -> {layout.advisory}")
     print(f"[crustify-audit] verification -> {report}")
+    print(f"[crustify-audit] notes        -> {notes}")
     print(f"[crustify-audit] reproductions: {layout.scratch}")
-    print("\n  The advisory is the agent's claim. The verification report is "
-          "the harness\n  re-deriving its evidence independently. Read them "
-          "together — a finding\n  is a candidate until you have.")
+    print("\n  Triage: does verification.md say the reproductions actually "
+          "failed, and\n  does each reproduction match the source line it "
+          "cites? Both yes -> real.")
     return 0
 
 

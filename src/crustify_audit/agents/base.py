@@ -50,8 +50,9 @@ class AuditAgent:
     """One UB hunt over one workspace.
 
     The agent is handed the deterministic seed (``unsafe.json``) and a scratch
-    directory, and is asked to produce an advisory. It never edits the audited
-    crate.
+    directory. It always leaves a record of what it examined; it writes an
+    advisory only when it actually crashed something. It never edits the
+    audited crate.
     """
 
     name = "crustify-audit"
@@ -74,9 +75,13 @@ class AuditAgent:
     # ------------------------------------------------------------------ run
 
     def run(self) -> Path | None:
-        """Drive the hunt. Returns the advisory path, or ``None`` if the agent
-        wrote none."""
-        out = self.layout.advisory
+        """Drive the hunt. Returns the notes path once the agent has run.
+
+        The DONE signal is the notes, not the advisory: a clean audit writes no
+        advisory, and gating on a file that a successful run may legitimately
+        never create would re-run the agent forever.
+        """
+        out = self.layout.notes
         if out.is_file():
             print(f"[crustify-audit] {self.stage}: {out} already exists, skipping. "
                   f"Delete it to re-run.")
@@ -127,6 +132,7 @@ class AuditAgent:
             "workspace": str(self.layout.workspace),
             "scan_json": str(self.layout.scan),
             "advisory": str(self.layout.advisory),
+            "notes": str(self.layout.notes),
             "scratch": str(self.layout.scratch),
             "focus": self.focus or "(none — work the seed in rank order)",
             "instruments": have + (f"    (not detected: {missing})" if missing else ""),

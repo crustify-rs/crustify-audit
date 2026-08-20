@@ -32,10 +32,22 @@ class Layout:
 
     # ---- `ub`: the agentic half
     @property
+    def notes(self) -> Path:
+        """ALWAYS written: what was examined and what was cleared.
+
+        This is the done signal, not the advisory -- because absence of an
+        advisory has to mean "nothing demonstrated", and that is only readable
+        if a clean run leaves something behind. Without it you cannot tell a
+        clean audit from an agent that died at 40% context."""
+        return self.root / "notes.md"
+
+    @property
     def advisory(self) -> Path:
-        """The agent's output, authored by the agent. Existence is the done
-        signal. Markdown, not a schema: the harness does not dictate what a
-        report should look like."""
+        """Written ONLY when the agent obtained an actual crash through a
+        reproduction it can defend. Its existence is the finding.
+
+        Markdown, not a schema: the harness does not dictate what a report
+        should look like, only when one is warranted."""
         return self.root / "advisory.md"
 
     @property
