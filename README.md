@@ -6,18 +6,20 @@ Two halves, and the split is the point:
 
 | | | |
 |---|---|---|
-| `metrics` | **deterministic** | a `syn` pass over the crate. Counts, plus a ranked list of sites worth a closer look. No LLM, no network, no build. Same tree, same bytes. |
-| `hunt` | **agentic** | one agent over that seed, hunting undefined behaviour reachable from safe code. Every finding must carry a reproduction Miri rejects. |
-| `report` | deterministic | renders findings as a sendable advisory. A formatter, not a second opinion. |
+| `unsafe` | **deterministic** | a `syn` pass over the crate's unsafe surface. Counts, plus a ranked list of sites worth a closer look. No LLM, no network, no build. Same tree, same bytes. |
+| `ub` | **agentic** | one agent over that seed, hunting undefined behaviour reachable from safe code — and authoring the advisory itself. |
 
-They are separate verbs, not one command with a flag, so a caller always knows
-whether the answer in front of them is reproducible.
+Separate verbs, not one command with a flag, so a caller always knows whether
+the answer in front of them is reproducible.
 
 ```sh
-crustify-audit /path/to/crate metrics
-crustify-audit /path/to/crate hunt --model anthropic/claude-opus-4-8
-crustify-audit /path/to/crate report > advisory.md
+crustify-audit /path/to/crate unsafe
+crustify-audit /path/to/crate ub --model anthropic/claude-opus-4-8
 ```
+
+There is no `report` verb. The agent writes the advisory; a template the
+harness fills in would flatten exactly the judgement the agent is there to
+exercise.
 
 The subject is an **ordinary cargo workspace**. No `crustify/` directory, no
 campaign, no CodeQL database — that is what makes this a separate binary from
@@ -33,7 +35,7 @@ The agent could grep. It should not:
   model's mood.
 - **Budget.** Enumeration is cheap and reasoning is expensive. Handing the agent
   a ranked list spends its context on the part only it can do.
-- **Falsifiability.** A finding cites a seed site, so a reviewer can check the
+- **Traceability.** A finding cites a seed site, so a reviewer can check the
   agent looked where it says it looked.
 
 The `suspicion` score is **ordering only**. The scanner cannot tell a sound
@@ -58,24 +60,21 @@ The bug this tool was built after holds its exclusive reference directly and
 reaches its shared one a level down through another struct; a direct-fields-only
 check misses it entirely.
 
-## Evidence standard
+## Where the line sits
 
-A finding you cannot demonstrate is a hypothesis. Every entry must carry a
-standalone reproduction that Miri rejects under **both** Stacked Borrows and
-Tree Borrows, or be recorded `verified: false` with an explanation.
+The harness runs the scan, hands the agent a seed and a writable directory, and
+starts it. Everything after that — what to investigate, how to reduce it, what a
+reproduction looks like, how to structure the advisory — is the agent's.
 
-Both models matter: Miri itself flags Stacked Borrows as experimental, so a
-finding Tree Borrows also rejects is much harder to argue with.
-
-Reproductions *reduce* the pattern rather than building the crate — the crates
-most worth auditing need system libraries the auditor may not have.
-
-Three verified findings beat twenty plausible ones. A false positive costs a
-maintainer more than a missed bug costs you.
+The prompt says what a good report looks like and why Miri under both borrow
+models is worth more than Miri under one. It does not hand over a form to fill
+in. A schema is a poor substitute for telling an author what makes a report
+land, and the parts of this job worth paying a model for are exactly the parts a
+schema cannot express.
 
 ## What the numbers mean, and don't
 
-`metrics` reports unsafe-block counts because they are context, **not a quality
+`unsafe` reports unsafe-block counts because they are context, **not a quality
 score**. A wrapper over C must contain unsafe, and folding 600 small audited
 blocks into 200 large ones improves the number while making the crate worse.
 
@@ -95,24 +94,25 @@ Draft. Working end to end; the pieces that need the most attention next:
 - The scanner is **syntactic**. A rustc driver would be more precise and should
   come later — but the motivating bug is a syntactic shape, and `syn` finds it
   without needing the crate to compile.
-- Miri verification is the agent's job today. A deterministic `verify` stage
-  that re-runs every recorded repro and refuses to report unconfirmed findings
-  is the obvious next step.
+- No `ub` run has happened yet, so the prompt is untested against real agent
+  output. That is the next thing to find out.
 - One agent, by design. Splitting the hunt across parallel agents is only worth
   it once a single one is demonstrably good.
+- The agent both produces findings and checks them. A deterministic re-run of
+  whatever reproductions it left behind would be worth having — but it has to
+  discover their shape rather than mandate it, or we are back to a schema.
 
 ## Layout
 
 ```
 scanner/                 the deterministic pass (Rust, syn)
 src/crustify_audit/
-  cli.py                 metrics / hunt / report
+  cli.py                 unsafe / ub
   layout.py              artifact paths; the plain-cargo-workspace contract
-  metrics.py             composer: drives the scanner, derives ratios
-  report.py              findings -> markdown advisory
+  unsafe_scan.py         drives the scanner, derives ratios
   models.py              <provider>/<model> -> backend
   agentlog.py            per-agent transcript + usage
   agents/base.py         the single audit agent
   agents/backends/       claude / codex CLI drivers
-  prompts/hunt.md        the hunt prompt
+  prompts/ub.md          the hunt prompt
 ```

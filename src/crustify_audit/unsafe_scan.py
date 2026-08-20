@@ -1,6 +1,6 @@
-"""metrics.py — the DETERMINISTIC composer.
+"""unsafe_scan.py — the DETERMINISTIC half, behind `crustify-audit … unsafe`.
 
-Drives the `syn`-based scanner over a workspace and writes ``metrics.json``.
+Drives the `syn`-based scanner over a workspace and writes ``unsafe.json``.
 
 WHY THIS IS A SEPARATE PHASE, AND NOT SOMETHING THE AGENT DOES.
 
@@ -104,8 +104,8 @@ def _derive(doc: dict) -> dict:
 def write(layout: Layout) -> Path:
     layout.root.mkdir(parents=True, exist_ok=True)
     doc = compose(layout)
-    layout.metrics.write_text(json.dumps(doc, indent=2) + "\n")
-    return layout.metrics
+    layout.scan.write_text(json.dumps(doc, indent=2) + "\n")
+    return layout.scan
 
 
 def summarize(doc: dict) -> str:

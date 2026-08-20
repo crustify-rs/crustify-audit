@@ -24,24 +24,27 @@ class Layout:
         self.workspace = Path(workspace).resolve()
         self.root = Path(out).resolve() if out else self.workspace / ARTIFACT_DIR
 
-    # ---- deterministic half
+    # ---- `unsafe`: the deterministic half
     @property
-    def metrics(self) -> Path:
-        """The composer's output: counts + a ranked seed list. Reproducible."""
-        return self.root / "metrics.json"
+    def scan(self) -> Path:
+        """The scanner's output: counts + a ranked seed list. Reproducible."""
+        return self.root / "unsafe.json"
 
-    # ---- agentic half
+    # ---- `ub`: the agentic half
     @property
-    def findings(self) -> Path:
-        """The agent's output. Existence is the done signal."""
-        return self.root / "findings.json"
+    def advisory(self) -> Path:
+        """The agent's output, authored by the agent. Existence is the done
+        signal. Markdown, not a schema: the harness does not dictate what a
+        report should look like."""
+        return self.root / "advisory.md"
 
     @property
     def scratch(self) -> Path:
-        """The agent's writable area -- repro crates, miri output, notes.
+        """The agent's writable area -- reproductions, miri output, notes.
 
         Outside the audited crate on purpose: the agent has no reason to write
-        there and every reason not to.
+        there and every reason not to. What goes in it is the agent's business;
+        the harness only guarantees the directory exists.
         """
         return self.root / "scratch"
 
