@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "crustify-audit"
+version = "0.1.0"
+description = "Find soundness bugs and safety trade-offs in Rust code that wraps C"
+requires-python = ">=3.13"
+dependencies = []
+
+[project.scripts]
+crustify-audit = "crustify_audit.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["crustify_audit*"]
+
+[tool.setuptools.package-data]
+crustify_audit = ["prompts/*.md"]

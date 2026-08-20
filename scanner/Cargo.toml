@@ -1,0 +1,16 @@
+[package]
+name = "crustify-audit-scanner"
+version = "0.1.0"
+edition = "2021"
+description = "Deterministic unsafe-surface scanner for Rust crates (the composer half of crustify-audit)"
+
+[dependencies]
+syn = { version = "2", features = ["full", "visit", "extra-traits"] }
+quote = "1"
+proc-macro2 = { version = "1", features = ["span-locations"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[[bin]]
+name = "crustify-audit-scanner"
+path = "src/main.rs"
