@@ -1,7 +1,7 @@
 """cli.py — `crustify-audit`.
 
     crustify-audit <workspace> [--out DIR] unsafe [--json]
-    crustify-audit <workspace> [--out DIR] ub     [--model M] [--focus F] [--timeout MIN]
+    crustify-audit <workspace> [--out DIR] ub     [--model M] [--billing B] [--focus F] [--timeout MIN]
 
 TWO VERBS, AND THE SPLIT IS THE POINT.
 
@@ -79,6 +79,15 @@ def build_parser() -> argparse.ArgumentParser:
     h.add_argument("--model", default=None, metavar="PROVIDER/MODEL",
                    help="e.g. anthropic/claude-opus-5, openai/gpt-5.6. The "
                         "provider prefix selects the backend and is mandatory.")
+    h.add_argument("--billing", choices=("subscription", "api"),
+                   default="subscription",
+                   help="How the provider CLI authenticates. `subscription` "
+                        "uses the CLI's own logged-in account; `api` uses a key "
+                        "from the environment. Not cosmetic and not switchable "
+                        "by env var alone: claude keeps sending its stored OAuth "
+                        "token unless `--bare`, and codex reads auth.json and "
+                        "401s on OPENAI_API_KEY unless the provider is declared "
+                        "with an env_key. A missing key fails at launch.")
     h.add_argument("--focus", default=None, metavar="TEXT",
                    help="Narrow the hunt, e.g. 'the format module' or 'iterators'.")
     h.add_argument("--timeout", type=int, default=30, metavar="MINUTES",
@@ -125,7 +134,8 @@ def _cmd_ub(layout: Layout, args) -> int:
               "rustup component add miri --toolchain nightly",
               file=sys.stderr)
     agent = AuditAgent(layout, model=args.model, focus=args.focus,
-                       timeout_s=(args.timeout * 60) or None)
+                       timeout_s=(args.timeout * 60) or None,
+                       billing=args.billing)
 
     # There is no skip: runs accumulate. Say what is already on disk so the
     # caller knows this run is adding to a record rather than starting one --

@@ -38,7 +38,7 @@ arguments.
 
 ```sh
 crustify-audit <workspace> [--out DIR] unsafe [--json]
-crustify-audit <workspace> [--out DIR] ub     [--model PROVIDER/MODEL] [--focus TEXT] [--timeout MIN]
+crustify-audit <workspace> [--out DIR] ub     [--model PROVIDER/MODEL] [--billing B] [--focus TEXT] [--timeout MIN]
 ```
 
 | flag | verb | default | effect |
@@ -47,6 +47,7 @@ crustify-audit <workspace> [--out DIR] ub     [--model PROVIDER/MODEL] [--focus 
 | `--out DIR` | both | `<workspace>/crustify/` | where artifacts go; point elsewhere to leave the tree untouched. Precedes the verb |
 | `--json` | `unsafe` | off | print the document instead of the summary |
 | `--model PROVIDER/MODEL` | `ub` | backend default | e.g. `anthropic/claude-opus-5`, `openai/gpt-5.6`; the prefix selects the backend and is mandatory |
+| `--billing subscription\|api` | `ub` | `subscription` | how the provider CLI authenticates. `api` adds `--bare` (claude) or an env-key provider block (codex) — neither uses a key in the environment without it; a missing key fails at launch |
 | `--focus TEXT` | `ub` | whole crate | narrow the hunt, e.g. `'the format module'` |
 | `--timeout MIN` | `ub` | `30` | wall-clock ceiling for one agent; `0` disables. Set it to the whole budget for one sitting — successive runs accumulate rather than split a budget |
 

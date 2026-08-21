@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import os
 import subprocess
 
 from crustify_audit.agentlog import AgentLog
@@ -19,7 +20,8 @@ _BASE = (
 class ClaudeCliBackend:
     def run(self, *, name, model, prompt_template, arguments,
             system_preamble, work_dir, log: AgentLog,
-            timeout_s: int | None = None) -> None:
+            timeout_s: int | None = None,
+            billing: str = "subscription") -> None:
         if shutil.which("claude") is None:
             raise SystemExit(
                 "the `claude` CLI is not on PATH. Install it, or pick an "
@@ -38,8 +40,19 @@ class ClaudeCliBackend:
             "--model", model,
             "--append-system-prompt", f"{_BASE}\n\n{system_preamble}",
             "--output-format", "stream-json", "--verbose",
-            "-p", prompt,
         ]
+        if billing == "api":
+            # `--bare` is the only switch that makes the CLI authenticate by API
+            # key: exporting ANTHROPIC_API_KEY alone does not — it keeps sending
+            # the stored OAuth token. It also strips hooks, LSP and CLAUDE.md
+            # discovery, which suits a pipeline invocation.
+            cmd.append("--bare")
+            if not os.environ.get("ANTHROPIC_API_KEY"):
+                raise SystemExit(
+                    "--billing api needs ANTHROPIC_API_KEY in the environment; "
+                    "without it the CLI issues no request and exits 0 having "
+                    "done nothing.")
+        cmd += ["-p", prompt]
         proc = subprocess.Popen(
             cmd, cwd=work_dir, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, text=True, bufsize=1)

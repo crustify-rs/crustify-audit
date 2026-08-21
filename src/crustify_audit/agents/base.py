@@ -71,11 +71,15 @@ class AuditAgent:
         model: str | None = None,
         focus: str | None = None,
         timeout_s: int | None = None,
+        billing: str = "subscription",
     ) -> None:
         self.layout = layout
         self.model = model or self.model
         self.focus = focus
         self.timeout_s = timeout_s
+        #: `subscription` | `api` — see the backends, which is where it changes
+        #: the argv rather than the environment.
+        self.billing = billing
 
     # ------------------------------------------------------------------ run
 
@@ -108,6 +112,7 @@ class AuditAgent:
                 work_dir=str(self.layout.scratch),
                 log=log,
                 timeout_s=self.timeout_s,
+                billing=self.billing,
             )
         return self.counts()
 
