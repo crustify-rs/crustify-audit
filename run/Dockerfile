@@ -5,8 +5,9 @@
 #   docker run --rm -it --name audit-ippcp \
 #       -e ANTHROPIC_API_KEY -e CRUSTIFY_BILLING=api \
 #       -v "$PWD:/opt/crustify-audit" \
-#       -v /path/to/target/crustify/rust:/subject \
+#       -v /path/to/target-repo:/subject \
 #       -v audit-ippcp-work:/work \
+#       -v /path/to/ffibox:/opt/ffibox \
 #       crustify-audit
 #
 # THREE MOUNTS, THREE LIFETIMES:
@@ -14,7 +15,7 @@
 #   /opt/crustify-audit  Read-WRITE host checkout of this repo. Read-write
 #                        because an agent that finds a flaw in the tool should
 #                        be able to fix it; point it at a branch you can review.
-#   /subject             The cargo workspace under audit, read-WRITE: the agent
+#   /subject             The REPOSITORY under audit, read-WRITE: the agent
 #                        writes its advisories, notes and reproductions to
 #                        `<subject>/crustify/audit/`. A bind mount, so those
 #                        land on the host and survive `--rm`.
@@ -33,18 +34,26 @@
 #                        installs; a dev library a subject needs every time
 #                        belongs in the apt line below, not in a volume.
 #
-# THE SUBJECT IS AN ORDINARY CARGO WORKSPACE. Point /subject at the directory
-# holding `Cargo.toml` — for a crustify campaign that is `<repo>/crustify/rust`,
-# not the repo root, which is the C library. The entrypoint checks and exits 2
-# rather than letting the run discover it later.
+# THE SUBJECT IS A REPOSITORY, not a bare cargo workspace. The crate is the
+# root when that is itself a crate, otherwise `crustify/rust`. The entrypoint
+# checks both and exits 2 rather than letting the run discover it later.
 #
-# THE C LIBRARY IS THE AGENT'S PROBLEM, deliberately. `ub` now demands that a
-# reproduction link the audited crate, so a wrapper whose `-sys` crates do not
-# build cannot produce an advisory — and getting them to build means building
-# the C library. The image carries a generic toolchain (cmake, ninja, nasm,
-# yasm, autotools, clang) so the agent can do that without first fetching a
-# build tool from source. Which library, and how, is not something this
-# Dockerfile can know.
+# The repo, because `ub` demands a reproduction that links the audited crate,
+# so a wrapper whose `-sys` crates do not build cannot produce an advisory —
+# and getting them to build means building the C library, whose sources are in
+# the repo beside the Rust. Mounting `crustify/rust` alone cut an agent off
+# from them and it cloned the C project from GitHub to get them back.
+#
+# A CAMPAIGN TREE NEEDS FFIBOX AT /opt/ffibox. crustify-cli's scaffold writes
+# `ffibox = { path = "/opt/ffibox" }` into every crate it generates — an
+# absolute path, which `cli-config.json` cannot override — so without that
+# mount cargo cannot even load the manifests, and the failure arrives as an
+# unloadable workspace member rather than a missing dependency. The entrypoint
+# checks for it when the crate resolves to `crustify/rust`.
+#
+# HOW to build that library is still the agent's problem. The image carries a
+# generic toolchain (cmake, ninja, nasm, yasm, autotools, clang) so it does not
+# start by fetching a build tool from source.
 #
 # SUBSCRIPTION AUTH needs the CLI's stored login, which lives under `HOME`:
 # mount it at `/work/.claude` (claude) or `/work/.codex` (codex). Copy the
@@ -150,17 +159,22 @@ ENV HOME=/work \
 RUN mkdir -p /work
 
 RUN printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' \
-      '# The subject must be a cargo workspace. For a crustify campaign that is' \
-      '# <repo>/crustify/rust, not the repo root — checking here costs one exit' \
-      '# instead of a confusing failure inside the tool.' \
+      '# The subject must hold a crate, at the root or under crustify/rust —' \
+      '# checking here costs one exit instead of a confusing failure later.' \
       '[ -d /opt/crustify-audit/src/crustify_audit ] || {' \
       '    echo "no checkout at /opt/crustify-audit — mount this repo there" >&2' \
       '    exit 2; }' \
-      '[ -f /subject/Cargo.toml ] || {' \
-      '    echo "no Cargo.toml at /subject — mount the cargo workspace there" >&2' \
-      '    echo "(for a crustify campaign: <repo>/crustify/rust)" >&2; exit 2; }' \
+      '[ -f /subject/Cargo.toml ] || [ -f /subject/crustify/rust/Cargo.toml ] || {' \
+      '    echo "no crate at /subject — looked for Cargo.toml there and at" >&2' \
+      '    echo "crustify/rust/. Mount the target REPOSITORY there." >&2; exit 2; }' \
       '# Checked here rather than left to the CLI: an agent with no usable auth' \
       '# issues no request and exits 0, which reads as a hunt that found nothing.' \
+      '# A campaign tree hard-codes ffibox at this path; see the header.' \
+      'if [ ! -f /subject/Cargo.toml ] && [ ! -d /opt/ffibox ]; then' \
+      '    echo "/subject is a campaign tree (crate at crustify/rust) and its" >&2' \
+      '    echo "manifests reference /opt/ffibox — mount an ffibox checkout" >&2' \
+      '    echo "there, or cargo cannot load the workspace." >&2; exit 2' \
+      'fi' \
       'case "${CRUSTIFY_BILLING}" in' \
       '    subscription) ;;' \
       '    api)' \

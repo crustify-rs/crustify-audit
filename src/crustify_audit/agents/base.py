@@ -133,7 +133,7 @@ class AuditAgent:
                 # certain to exist: the agent creates the artifact tree itself,
                 # so nothing can start inside it. The prompt is what keeps
                 # writes out of the checkout — see `system_preamble`.
-                work_dir=str(self.layout.workspace),
+                work_dir=str(self.layout.repo),
                     log=log,
                     billing=self.billing,
                 )
@@ -185,7 +185,7 @@ class AuditAgent:
         Every injected fact is a place the prompt and the layout can drift
         apart, and one more thing for the agent to trust instead of check.
         """
-        return {"workspace": str(self.layout.workspace)}
+        return {"workspace": str(self.layout.repo)}
 
     def system_preamble(self) -> str:
         """The role and the one hard rule.

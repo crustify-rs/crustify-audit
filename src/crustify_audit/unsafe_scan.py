@@ -18,15 +18,16 @@ import json
 from pathlib import Path
 
 from crustify_audit import driver
-from crustify_audit.layout import Layout
+from crustify_audit.layout import CAMPAIGN_WORKSPACE, Layout
 
 
 def compose(layout: Layout) -> dict:
     """Scan the workspace and return the metrics document."""
     if not layout.is_cargo_workspace():
         raise SystemExit(
-            f"metrics: no Cargo.toml at {layout.workspace}. crustify-audit "
-            f"audits a cargo workspace — point it at the crate root.")
+            f"metrics: no crate at {layout.repo} — looked for Cargo.toml there "
+            f"and at {CAMPAIGN_WORKSPACE}/. Point crustify-audit at a "
+            f"repository holding one.")
     doc: dict = {"crate_path": str(layout.workspace)}
     try:
         doc["counts"] = driver.measure(layout.workspace)

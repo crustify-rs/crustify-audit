@@ -25,10 +25,12 @@ subdirectory so the two tools' artifacts stay separable.
 The agent authors the advisory itself, in prose, because the judgement it is
 there to exercise is the part a filled-in template would flatten.
 
-The subject is an **ordinary cargo workspace**. No `crustify/` directory, no
-campaign, no CodeQL database — that is what makes this a separate binary from
-`crustify-cli` rather than another subcommand, since both crustify binaries
-mandate `<repo_root> <target>` and refuse to run without campaign artifacts.
+The subject is an **ordinary repository**. The crate is its root, or
+`crustify/rust` if it has been through a campaign — nothing else is required:
+no CodeQL database, no scope config, no campaign artifacts. That is what makes
+this a separate binary from `crustify-cli` rather than another subcommand,
+since both crustify binaries mandate `<repo_root> <target>` and refuse to run
+without them.
 
 ## Usage
 
@@ -37,13 +39,13 @@ install, `PYTHONPATH=src python3 -m crustify_audit.cli` takes the same
 arguments.
 
 ```sh
-crustify-audit <workspace> unsafe [--json]
-crustify-audit <workspace> ub     [--model PROVIDER/MODEL] [--billing B] [--timeout MIN]
+crustify-audit <repo> unsafe [--json]
+crustify-audit <repo> ub     [--model PROVIDER/MODEL] [--billing B] [--timeout MIN]
 ```
 
 | flag | verb | default | effect |
 |---|---|---|---|
-| `<workspace>` | both | — | cargo workspace to audit; an ordinary crate |
+| `<repo>` | both | — | repository to audit; the crate is its root, or `crustify/rust` |
 | `--json` | `unsafe` | off | print `unsafe.json` to stdout instead of the human summary. The file is written either way |
 | `--model PROVIDER/MODEL` | `ub` | backend default | e.g. `anthropic/claude-opus-5`, `openai/gpt-5.6`; the prefix selects the backend and is mandatory |
 | `--billing subscription\|api` | `ub` | `subscription` | how the provider CLI authenticates. `api` adds `--bare` (claude) or an env-key provider block (codex) — neither uses a key in the environment without it; a missing key fails at launch |
@@ -62,7 +64,7 @@ docker build -t crustify-audit run/
 docker run --rm -it --name audit-ippcp \
     -e ANTHROPIC_API_KEY -e CRUSTIFY_BILLING=api \
     -v "$PWD:/opt/crustify-audit" \
-    -v /path/to/target/crustify/rust:/subject \
+    -v /path/to/target-repo:/subject \
     -v audit-ippcp-work:/work \
     crustify-audit
 ```
@@ -70,7 +72,7 @@ docker run --rm -it --name audit-ippcp \
 | mount | mode | holds |
 |---|---|---|
 | `/opt/crustify-audit` | read-write | this checkout; agents may fix the tool, so give them a reviewable branch |
-| `/subject` | bind, read-write | the cargo workspace under audit — for a campaign that is `<repo>/crustify/rust`, not the repo root. Advisories and notes land here |
+| `/subject` | bind, read-write | the repository under audit; the crate is its root, or `crustify/rust`. The repo rather than the crate, so the C library's sources come with it. Advisories and notes land here |
 | `/work` | named volume, and `HOME` | everything the agent builds outside the artifact tree — a C library it cloned, the cargo registry — plus the provider CLI's config at `/work/.claude`. Without it, `--rm` destroys all of it. The Rust toolchain, miri, cmake and nasm need no volume: they are installed at image build time and live in the image layer |
 
 | var | values | default |
@@ -175,7 +177,7 @@ to say in the advisory what it could not check.
 
 ## Where the line sits
 
-The harness hands the agent a workspace path and starts it. Everything after that — what to investigate, how to reduce it, what a
+The harness hands the agent the repository path and starts it. Everything after that — what to investigate, how to reduce it, what a
 reproduction looks like, how to structure the advisory — is the agent's.
 
 The prompt says what a good report looks like and why Miri under both borrow
@@ -236,7 +238,7 @@ rust-ffmpeg, each producing an advisory and a set of notes.
 src/driver/              the unsafe metrics (Rust, rustc driver over HIR)
 src/crustify_audit/
   cli.py                 unsafe / ub
-  layout.py              artifact paths; the plain-cargo-workspace contract
+  layout.py              artifact paths; repo -> crate resolution
   unsafe_scan.py         writes unsafe.json, derives ratios
   driver.py              builds and runs the rustc driver
   models.py              <provider>/<model> -> backend

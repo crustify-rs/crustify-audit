@@ -28,10 +28,37 @@ from pathlib import Path
 ARTIFACT_DIR = "crustify/audit"
 
 
+#: Where a crustify campaign puts the Rust it emitted. Checked when the repo
+#: root is not itself a crate.
+CAMPAIGN_WORKSPACE = "crustify/rust"
+
+
 class Layout:
-    def __init__(self, workspace: Path) -> None:
-        self.workspace = Path(workspace).resolve()
-        self.root = self.workspace / ARTIFACT_DIR
+    """Paths for one audit, resolved from the REPO.
+
+    The subject is a repository, not a bare cargo workspace, because a wrapper
+    is not auditable without the thing it wraps: `ub` requires a reproduction
+    that links the audited crate, which for an FFI wrapper means building the C
+    library, whose sources are in the repo — beside the Rust, not inside it. A
+    run pointed at `crustify/rust` alone had to clone the C project from
+    GitHub to get them back.
+
+    So `repo` is the mount and `workspace` is the crate within it: the repo
+    root when that is itself a crate, otherwise `crustify/rust`. Artifacts hang
+    off the REPO either way, which also puts `crustify/audit/` beside
+    `crustify/rust/` rather than nested inside it.
+    """
+
+    def __init__(self, repo: Path) -> None:
+        self.repo = Path(repo).resolve()
+        self.root = self.repo / ARTIFACT_DIR
+
+    @property
+    def workspace(self) -> Path:
+        """The cargo workspace to measure and build."""
+        if (self.repo / "Cargo.toml").is_file():
+            return self.repo
+        return self.repo / CAMPAIGN_WORKSPACE
 
     # ---- `unsafe`: the deterministic half
     @property

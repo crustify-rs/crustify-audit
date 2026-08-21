@@ -41,9 +41,11 @@ def build_parser() -> argparse.ArgumentParser:
         description="Find soundness bugs and safety trade-offs in Rust that wraps C. "
                     "`unsafe` is deterministic; `ub` drives one LLM agent over "
                     "its output.")
-    p.add_argument("workspace",
-                   help="Path to the cargo workspace to audit. An ORDINARY crate — "
-                        "no crustify/ directory, campaign or CodeQL database needed.")
+    p.add_argument("workspace", metavar="REPO",
+                   help="Path to the REPOSITORY to audit. The crate is the root "
+                        "when that is itself a crate, otherwise crustify/rust. "
+                        "The repo, not the crate, because auditing an FFI "
+                        "wrapper means building the C library beside it.")
     sub = p.add_subparsers(dest="command", required=True)
 
     m = sub.add_parser(
