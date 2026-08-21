@@ -134,6 +134,10 @@ class AuditAgent:
             "crustify_dir": str(self.layout.root),
             "scratch": str(self.layout.scratch),
             "focus": self.focus or "(none — work the seed in rank order)",
+            # The agent cannot see a clock. Without this it cannot budget, and
+            # a SIGTERM at the deadline reads to it as an unexplained death.
+            "budget": (f"{self.timeout_s // 60} minutes" if self.timeout_s
+                       else "no limit"),
             "instruments": have + (f"    (not detected: {missing})" if missing else ""),
         }
 

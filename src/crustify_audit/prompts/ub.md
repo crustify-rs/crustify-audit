@@ -6,11 +6,30 @@ Your scratch dir:      `{scratch}`   (yours entirely — working files, repros)
 Artifact root:         `{crustify_dir}`
 Focus:                 `{focus}`
 Instruments available: `{instruments}`
+Wall-clock budget:     `{budget}`
 
 Under the artifact root, two directories with fixed names:
 
     advisories/   one file per CONFIRMED bug
     notes/        one file per lead you chased, always
+
+## You will be terminated without warning
+
+Your budget above is enforced by an external `SIGTERM`. There is no signal
+beforehand, no chance to flush, and no way for you to check the clock — so
+**write every artifact the moment it is finished, never in a batch at the end.**
+
+Finish investigating a lead, write its note, and only then start the next one.
+Confirm a bug, write its advisory, and only then continue. Work already written
+survives; work you were saving up does not.
+
+This is not hypothetical. A previous run on this crate spent its whole budget
+investigating, wrote its advisories with cross-references to notes it intended
+to write afterwards, and was killed first — leaving nine dangling references and
+no notes at all. The next run had to reconstruct them.
+
+Budget your time against the number above. If it is short, prefer finishing and
+recording two leads over half-investigating six.
 
 ## Start by reading what earlier runs found
 

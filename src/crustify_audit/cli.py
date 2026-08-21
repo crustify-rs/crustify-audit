@@ -83,8 +83,12 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Narrow the hunt, e.g. 'the format module' or 'iterators'.")
     h.add_argument("--timeout", type=int, default=30, metavar="MINUTES",
                    dest="timeout",
-                   help="Wall-clock ceiling; the agent is terminated after this "
-                        "(default 30, 0 disables). This is the ONLY cap that "
+                   help="Wall-clock ceiling for ONE agent (default 30, 0 "
+                        "disables). Set it to the whole budget you intend to "
+                        "spend — do NOT chunk a budget into several shorter "
+                        "runs, which just terminates a working agent early. "
+                        "Successive runs are for ACCUMULATING over time, not "
+                        "for splitting one sitting. This is the only cap that "
                         "works under subscription auth — `--max-budget-usd` "
                         "meters API-call spend, of which there is none, and the "
                         "CLI has no turn limit. A terminated agent may have "
