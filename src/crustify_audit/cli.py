@@ -45,7 +45,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Path to the cargo workspace to audit. An ORDINARY crate — "
                         "no crustify/ directory, campaign or CodeQL database needed.")
     p.add_argument("--out", default=None, metavar="DIR",
-                   help="Where artifacts go (default: <workspace>/.crustify-audit/). "
+                   help="Where artifacts go (default: <workspace>/crustify/). "
                         "Point elsewhere to leave the audited tree untouched.")
     sub = p.add_subparsers(dest="command", required=True)
 
