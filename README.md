@@ -22,9 +22,8 @@ Artifacts land in `<crate>/crustify/` — `advisories/`, `notes/`, `scratch/`,
 campaign target puts the audit beside the campaign. `--out` redirects it all
 when the subject must stay pristine.
 
-There is no `report` verb. The agent writes the advisory; a template the
-harness fills in would flatten exactly the judgement the agent is there to
-exercise.
+The agent authors the advisory itself, in prose, because the judgement it is
+there to exercise is the part a filled-in template would flatten.
 
 The subject is an **ordinary cargo workspace**. No `crustify/` directory, no
 campaign, no CodeQL database — that is what makes this a separate binary from
@@ -73,10 +72,9 @@ named after the bug. `crustify/notes/` holds one note per lead it chased,
 whether or not that lead panned out, so a clean audit is distinguishable from an
 agent that died halfway.
 
-Runs accumulate. There is no skip and no idempotency check: the agent reads
-both directories before starting, so a second run extends the record — skipping
-a cleared lead, adding a route to an existing advisory — instead of paying to
-re-derive it.
+Runs accumulate: the agent reads both directories before starting, so a second
+run extends the record — skipping a cleared lead, adding a route to an existing
+advisory — instead of paying to re-derive it.
 
 For each advisory, two questions:
 
@@ -136,6 +134,11 @@ schema cannot express.
 score**. A wrapper over C must contain unsafe, and folding 600 small audited
 blocks into 200 large ones improves the number while making the crate worse.
 
+`#[cfg(test)]` items are skipped by the walk and subtracted from `code_lines`,
+so both sides of a ratio measure the code a normal build compiles. An inline
+`mod tests` would otherwise put its lines in the denominator and its `unsafe`
+in the numerator.
+
 The figures that *are* categorical are the ones measuring what crosses the
 public API boundary, where the caller has to discharge the obligation:
 
@@ -147,18 +150,19 @@ library.
 
 ## Status
 
-Draft. Working end to end; the pieces that need the most attention next:
+Working end to end. `ub` has run against git2-rs, rust-openssl and
+rust-ffmpeg, each producing an advisory and a set of notes.
 
-- The scanner is **syntactic**. A rustc driver would be more precise and should
-  come later — but the motivating bug is a syntactic shape, and `syn` finds it
-  without needing the crate to compile.
-- No `ub` run has happened yet, so the prompt is untested against real agent
-  output. That is the next thing to find out.
-- One agent, by design. Splitting the hunt across parallel agents is only worth
-  it once a single one is demonstrably good.
-- The agent both produces findings and checks them. A deterministic re-run of
-  whatever reproductions it left behind would be worth having — but it has to
-  discover their shape rather than mandate it, or we are back to a schema.
+- The scanner is **syntactic**, and reads the source as written: it sees no
+  macro-generated code, and resolves no types or crate boundaries. The
+  motivating bug is a syntactic shape, and `syn` finds it without needing the
+  crate to compile — which is what lets the pass run against a wrapper whose C
+  dependencies are absent. `crustify-cli audit` carries a rustc driver over
+  HIR and typeck for the cases that need resolution; the two measure different
+  populations and their numbers are not comparable.
+- One agent, by design. Splitting the hunt across parallel agents is worth it
+  once a single one is demonstrably good.
+- The agent both produces findings and checks them.
 
 ## Layout
 
