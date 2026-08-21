@@ -58,36 +58,45 @@ warns without it.
 
 ## Container
 
+The run starts with the container: `docker run` *is* the run, and it ends when
+the budget is spent.
+
 ```sh
 docker build -t crustify-audit run/
+mkdir -p ~/.claude-audit && cp ~/.claude/.credentials.json ~/.claude-audit/
 
-docker run --rm -it --name audit-ippcp \
-    -e ANTHROPIC_API_KEY -e CRUSTIFY_BILLING=api \
-    -e CRUSTIFY_TARGET=/src -e CRUSTIFY_TARGET_REF=marvinte/wrap-2026-08-21 \
+docker run -d --name audit-ippcp \
     -v "$PWD:/opt/crustify-audit" \
-    -v /path/to/target-repo:/src:ro \
+    -v /path/to/target-repo:/target \
+    -v ~/.claude-audit:/work/.claude \
     -v audit-ippcp-work:/work \
     crustify-audit
+
+docker logs -f audit-ippcp
 ```
 
 | mount | mode | holds |
 |---|---|---|
-| `/opt/crustify-audit` | read-write | this checkout; agents may fix the tool, so give them a reviewable branch |
-| `/src` | bind, read-only | the target checkout, when `CRUSTIFY_TARGET` is a path. Cloned into the volume, never audited in place, so it comes back unmodified |
-| `/work` | named volume, and `HOME` | everything: the target clone at `/work/target` and its `crustify/audit/` artifacts, the C library the agent builds, the cargo registry, the provider CLI's config at `/work/.claude`. Drop it and the run is throwaway. The Rust toolchain, miri, cmake and nasm need no volume — they are in the image layer |
+| `/target` | bind, read-write | the repository to audit, on whatever branch the host has checked out. The agent's `crustify/audit/` artifacts appear in that working tree as the run produces them |
+| `/opt/crustify-audit` | bind, read-write | this checkout; agents may fix the tool, so give them a reviewable branch |
+| `/work/.claude` | bind, read-write | a **copy** of `~/.claude/.credentials.json`, for `subscription` billing. Not your real `~/.claude`, which holds every project's history, and not the file alone — the CLI refreshes the token by rename, and a rename across a single-file bind mount fails. Re-copy when a run fails to authenticate. Codex is `/work/.codex` with `auth.json`. With `--billing api` there is no credential mount: pass `-e ANTHROPIC_API_KEY` instead |
+| `/work` | named volume, and `HOME` | the C library the agent builds, the cargo registry, the provider CLI's config at `/work/.claude`. Not the audit artifacts — those are in the target checkout. The Rust toolchain, miri, cmake and nasm need no volume; they are in the image layer |
 
 | var | values | default |
 |---|---|---|
-| `CRUSTIFY_TARGET` | git URL, or a path to a checkout mounted in the container | — |
-| `CRUSTIFY_TARGET_REF` | branch, tag or sha | clone default |
 | `CRUSTIFY_VERB` | `ub`, `unsafe` | `ub` |
 | `CRUSTIFY_MODEL` | `<provider>/<model>` | `anthropic/claude-opus-5` |
 | `CRUSTIFY_BILLING` | `subscription`, `api` | `subscription` |
 | `CRUSTIFY_TIMEOUT` | minutes, `0` for one agent | `60` |
 
-The target is cloned into the volume on first run and reused after, so a
-second run against the same volume continues the first — the agent reads the
-advisories and notes already there.
+There is no ref to pass: the container audits the checkout it is given, so
+choosing a branch is `git checkout` on the host, where you can see the result.
+Runs accumulate against that tree — a second one reads the advisories and notes
+the first left.
+
+Auth is checked before the agent starts, for both billing modes: a missing
+token or key exits 2 naming the fix, rather than letting the CLI issue no
+request and exit 0 as though the hunt found nothing.
 
 The image carries cmake, ninja, nasm, yasm, autotools and clang, and nothing
 target-specific. The C library the crate wraps, a campaign tree's `ffibox`,
@@ -239,19 +248,3 @@ rust-ffmpeg, each producing an advisory and a set of notes.
 - One agent, by design. Splitting the hunt across parallel agents is worth it
   once a single one is demonstrably good.
 - The agent both produces findings and checks them.
-
-## Layout
-
-```
-src/driver/              the unsafe metrics (Rust, rustc driver over HIR)
-src/crustify_audit/
-  cli.py                 unsafe / ub
-  layout.py              artifact paths; repo -> crate resolution
-  unsafe_scan.py         writes unsafe.json, derives ratios
-  driver.py              builds and runs the rustc driver
-  models.py              <provider>/<model> -> backend
-  agentlog.py            per-agent transcript + usage
-  agents/base.py         the single audit agent
-  agents/backends/       claude / codex CLI drivers
-  prompts/ub.md          the hunt prompt
-```
