@@ -54,6 +54,36 @@ crate to compile; without either there are no counts and the reason is
 recorded. `ub` needs `cargo +nightly miri` to check its own reproductions, and
 warns without it.
 
+## Container
+
+```sh
+docker build -t crustify-audit run/
+
+docker run --rm -it --name audit-ippcp \
+    -e ANTHROPIC_API_KEY -e CRUSTIFY_BILLING=api \
+    -v "$PWD:/opt/crustify-audit" \
+    -v /path/to/target/crustify/rust:/subject \
+    -v audit-ippcp-work:/work \
+    crustify-audit
+```
+
+| mount | mode | holds |
+|---|---|---|
+| `/opt/crustify-audit` | read-write | this checkout; agents may fix the tool, so give them a reviewable branch |
+| `/subject` | bind, read-write | the cargo workspace under audit — for a campaign that is `<repo>/crustify/rust`, not the repo root. Advisories and notes land here |
+| `/work` | named volume, and `HOME` | everything the agent builds outside the artifact tree — a C library it cloned, a toolchain it fetched — plus the provider CLI's config at `/work/.claude`. Without it, `--rm` destroys all of it |
+
+| var | values | default |
+|---|---|---|
+| `CRUSTIFY_VERB` | `ub`, `unsafe` | `ub` |
+| `CRUSTIFY_MODEL` | `<provider>/<model>` | `anthropic/claude-opus-5` |
+| `CRUSTIFY_BILLING` | `subscription`, `api` | `subscription` |
+| `CRUSTIFY_TIMEOUT` | minutes, `0` for one agent | `60` |
+
+The image carries cmake, ninja, nasm, yasm, autotools and clang so the agent
+can build the subject's C library itself — which `ub` now requires, since an
+advisory has to link the audited crate.
+
 ## Why the deterministic half exists
 
 Not because an agent could not count. Because a count it produced would be a
