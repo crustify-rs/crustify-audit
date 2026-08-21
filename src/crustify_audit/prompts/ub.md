@@ -12,23 +12,28 @@ Under the artifact root, two directories with fixed names:
     advisories/   one file per CONFIRMED bug
     notes/        one file per lead you chased, always
 
-## You will be terminated without warning
+## Write as you go, and stop when the budget is spent
 
-Your budget above is enforced by an external `SIGTERM`. There is no signal
-beforehand, no chance to flush, and no way for you to check the clock — so
-**write every artifact the moment it is finished, never in a batch at the end.**
+Nothing will kill you. The budget above is what remains of the RUN's wall
+clock, and you are not the only claim on it: when you finish, if time is left,
+another agent starts with what remains and reads what you wrote. Overrunning
+does not get you truncated — it just spends the budget the next agent would
+have had.
 
-Finish investigating a lead, write its note, and only then start the next one.
-Confirm a bug, write its advisory, and only then continue. Work already written
-survives; work you were saving up does not.
+So **write every artifact the moment it is finished, never in a batch at the
+end.** Finish investigating a lead, write its note, and only then start the
+next one. Confirm a bug, write its advisory, and only then continue. What you
+have written is what anyone — the next agent, the reader — actually gets.
 
-This is not hypothetical. A previous run on this crate spent its whole budget
-investigating, wrote its advisories with cross-references to notes it intended
-to write afterwards, and was killed first — leaving nine dangling references and
-no notes at all. The next run had to reconstruct them.
+This is not hypothetical. A previous run wrote its advisories with
+cross-references to notes it intended to write afterwards and ended before
+writing them, leaving nine dangling references and no notes at all. The next
+run had to reconstruct what it had been thinking.
 
-Budget your time against the number above. If it is short, prefer finishing and
-recording two leads over half-investigating six.
+Budget your work against the number above. If it is short, prefer finishing and
+recording two leads over half-investigating six, and leave the sixth as a note
+saying where you got to — that is a real handover, and the agent after you
+picks it up.
 
 ## Start by reading what earlier runs found
 
