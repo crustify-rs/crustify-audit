@@ -63,8 +63,9 @@ docker build -t crustify-audit run/
 
 docker run --rm -it --name audit-ippcp \
     -e ANTHROPIC_API_KEY -e CRUSTIFY_BILLING=api \
+    -e CRUSTIFY_TARGET=/src -e CRUSTIFY_TARGET_REF=marvinte/wrap-2026-08-21 \
     -v "$PWD:/opt/crustify-audit" \
-    -v /path/to/target-repo:/subject \
+    -v /path/to/target-repo:/src:ro \
     -v audit-ippcp-work:/work \
     crustify-audit
 ```
@@ -72,19 +73,26 @@ docker run --rm -it --name audit-ippcp \
 | mount | mode | holds |
 |---|---|---|
 | `/opt/crustify-audit` | read-write | this checkout; agents may fix the tool, so give them a reviewable branch |
-| `/subject` | bind, read-write | the repository under audit; the crate is its root, or `crustify/rust`. The repo rather than the crate, so the C library's sources come with it. Advisories and notes land here |
-| `/work` | named volume, and `HOME` | everything the agent builds outside the artifact tree — a C library it cloned, the cargo registry — plus the provider CLI's config at `/work/.claude`. Without it, `--rm` destroys all of it. The Rust toolchain, miri, cmake and nasm need no volume: they are installed at image build time and live in the image layer |
+| `/src` | bind, read-only | the target checkout, when `CRUSTIFY_TARGET` is a path. Cloned into the volume, never audited in place, so it comes back unmodified |
+| `/work` | named volume, and `HOME` | everything: the target clone at `/work/target` and its `crustify/audit/` artifacts, the C library the agent builds, the cargo registry, the provider CLI's config at `/work/.claude`. Drop it and the run is throwaway. The Rust toolchain, miri, cmake and nasm need no volume — they are in the image layer |
 
 | var | values | default |
 |---|---|---|
+| `CRUSTIFY_TARGET` | git URL, or a path to a checkout mounted in the container | — |
+| `CRUSTIFY_TARGET_REF` | branch, tag or sha | clone default |
 | `CRUSTIFY_VERB` | `ub`, `unsafe` | `ub` |
 | `CRUSTIFY_MODEL` | `<provider>/<model>` | `anthropic/claude-opus-5` |
 | `CRUSTIFY_BILLING` | `subscription`, `api` | `subscription` |
 | `CRUSTIFY_TIMEOUT` | minutes, `0` for one agent | `60` |
 
-The image carries cmake, ninja, nasm, yasm, autotools and clang so the agent
-can build the subject's C library itself — which `ub` now requires, since an
-advisory has to link the audited crate.
+The target is cloned into the volume on first run and reused after, so a
+second run against the same volume continues the first — the agent reads the
+advisories and notes already there.
+
+The image carries cmake, ninja, nasm, yasm, autotools and clang, and nothing
+target-specific. The C library the crate wraps, a campaign tree's `ffibox`,
+anything else it needs — the agent installs itself, which `ub` requires anyway,
+since an advisory has to link the audited crate.
 
 ## Why the deterministic half exists
 

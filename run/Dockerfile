@@ -4,56 +4,66 @@
 #
 #   docker run --rm -it --name audit-ippcp \
 #       -e ANTHROPIC_API_KEY -e CRUSTIFY_BILLING=api \
+#       -e CRUSTIFY_TARGET=/src -e CRUSTIFY_TARGET_REF=marvinte/wrap-2026-08-21 \
 #       -v "$PWD:/opt/crustify-audit" \
-#       -v /path/to/target-repo:/subject \
+#       -v /path/to/target-repo:/src:ro \
 #       -v audit-ippcp-work:/work \
-#       -v /path/to/ffibox:/opt/ffibox \
 #       crustify-audit
 #
-# THREE MOUNTS, THREE LIFETIMES:
+# `CRUSTIFY_TARGET` is a git URL or a path inside the container. A path is the
+# common case — an on-disk checkout, bind-mounted READ-ONLY as above — and it
+# is still cloned rather than audited in place, so the agent's writes land in
+# the volume and the tree you pointed at is untouched.
 #
-#   /opt/crustify-audit  Read-WRITE host checkout of this repo. Read-write
-#                        because an agent that finds a flaw in the tool should
-#                        be able to fix it; point it at a branch you can review.
-#   /subject             The REPOSITORY under audit, read-WRITE: the agent
-#                        writes its advisories, notes and reproductions to
-#                        `<subject>/crustify/audit/`. A bind mount, so those
-#                        land on the host and survive `--rm`.
-#   /work                Named volume, and `HOME`. Everything the agent does
-#                        OUTSIDE the artifact tree lives here — a C library it
-#                        cloned and built, the cargo registry, the CLI's own
-#                        config under `/work/.claude`. Without it that work is
-#                        in the container layer and `--rm` destroys it: one run
-#                        spent 25 minutes building libippcp with nasm and lost
-#                        all of it on exit.
+# ONE MOUNT, ONE VOLUME:
 #
-#                        What does NOT need this volume is anything installed
-#                        at image BUILD time — the Rust toolchain, miri, cmake,
+#   /opt/crustify-audit  Read-WRITE host checkout of this repo, and the only
+#                        bind mount. Read-write because an agent that finds a
+#                        flaw in the tool should be able to fix it; point it at
+#                        a branch you can review.
+#   /work                Named volume, and `HOME`. EVERYTHING else lives here:
+#                        the target clone under `/work/target`, its
+#                        `crustify/audit/` artifacts, the C library the agent
+#                        builds, the cargo registry, the provider CLI's config
+#                        at `/work/.claude`. Drop the volume and the run is
+#                        throwaway — one earlier run built libippcp with nasm
+#                        over 25 minutes into the container layer and lost all
+#                        of it to `--rm`.
+#
+#                        What does NOT need the volume is anything installed at
+#                        image BUILD time — the Rust toolchain, miri, cmake,
 #                        nasm. Those are in the image layer, so every container
 #                        has them. The image is the persistence layer for
-#                        installs; a dev library a subject needs every time
-#                        belongs in the apt line below, not in a volume.
+#                        installs; a dev library every subject needs belongs in
+#                        the apt line below, not in a volume.
+#
+# THE TARGET IS CLONED, NOT AUDITED IN PLACE. `CRUSTIFY_TARGET` names it — a
+# git URL, or a path to a checkout you mounted read-only — and
+# `CRUSTIFY_TARGET_REF` picks the branch. The entrypoint clones into
+# `/work/target` on first run and reuses it afterwards, so a second run against
+# the same volume continues the first: the agent reads the advisories and notes
+# already there. An on-disk source stays read-only and unmodified; what the run
+# produces is read out of the volume rather than found in someone's working
+# tree, which matters for an agent running with permissions bypassed.
 #
 # THE SUBJECT IS A REPOSITORY, not a bare cargo workspace. The crate is the
 # root when that is itself a crate, otherwise `crustify/rust`. The entrypoint
-# checks both and exits 2 rather than letting the run discover it later.
+# checks both after cloning and exits 2 rather than letting the run discover it
+# later.
 #
 # The repo, because `ub` demands a reproduction that links the audited crate,
 # so a wrapper whose `-sys` crates do not build cannot produce an advisory —
 # and getting them to build means building the C library, whose sources are in
-# the repo beside the Rust. Mounting `crustify/rust` alone cut an agent off
-# from them and it cloned the C project from GitHub to get them back.
+# the repo beside the Rust.
 #
-# A CAMPAIGN TREE NEEDS FFIBOX AT /opt/ffibox. crustify-cli's scaffold writes
-# `ffibox = { path = "/opt/ffibox" }` into every crate it generates — an
-# absolute path, which `cli-config.json` cannot override — so without that
-# mount cargo cannot even load the manifests, and the failure arrives as an
-# unloadable workspace member rather than a missing dependency. The entrypoint
-# checks for it when the crate resolves to `crustify/rust`.
-#
-# HOW to build that library is still the agent's problem. The image carries a
-# generic toolchain (cmake, ninja, nasm, yasm, autotools, clang) so it does not
-# start by fetching a build tool from source.
+# TARGET-SPECIFIC DEPENDENCIES ARE THE AGENT'S PROBLEM, all of them: the C
+# library, and anything else a particular tree needs — a campaign tree's
+# manifests reference `ffibox` at an absolute path, and putting it there is the
+# same job. The image carries a generic toolchain (cmake, ninja, nasm, yasm,
+# autotools, clang, git, curl) so the agent does not start by fetching a build
+# tool from source, and stops there. What a given subject needs is not
+# something this Dockerfile can know, and pinning it here would date the image
+# to one target.
 #
 # SUBSCRIPTION AUTH needs the CLI's stored login, which lives under `HOME`:
 # mount it at `/work/.claude` (claude) or `/work/.codex` (codex). Copy the
@@ -122,6 +132,12 @@ RUN if [ "${INSTALL_CLAUDE}" = "1" ]; then \
 #    which persists on the host.
 ENV PYTHONPATH=/opt/crustify-audit/src
 
+# The repository to audit: a git URL, or a path inside the container to a
+# checkout mounted read-only. Cloned into /work/target on first run either way.
+# A ref is optional; without one the clone's default branch is used.
+ENV CRUSTIFY_TARGET= \
+    CRUSTIFY_TARGET_REF=
+
 # Which verb to run: `unsafe` (deterministic, no LLM) or `ub` (agentic, spends).
 ENV CRUSTIFY_VERB=ub
 
@@ -159,22 +175,34 @@ ENV HOME=/work \
 RUN mkdir -p /work
 
 RUN printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' \
-      '# The subject must hold a crate, at the root or under crustify/rust —' \
-      '# checking here costs one exit instead of a confusing failure later.' \
       '[ -d /opt/crustify-audit/src/crustify_audit ] || {' \
       '    echo "no checkout at /opt/crustify-audit — mount this repo there" >&2' \
       '    exit 2; }' \
-      '[ -f /subject/Cargo.toml ] || [ -f /subject/crustify/rust/Cargo.toml ] || {' \
-      '    echo "no crate at /subject — looked for Cargo.toml there and at" >&2' \
-      '    echo "crustify/rust/. Mount the target REPOSITORY there." >&2; exit 2; }' \
+      '# Clone once per volume. A second run against the same volume is a' \
+      '# CONTINUATION: the agent reads the advisories and notes the first left.' \
+      'target=/work/target' \
+      'if [ ! -d "$target/.git" ]; then' \
+      '    [ -n "${CRUSTIFY_TARGET:-}" ] || {' \
+      '        echo "CRUSTIFY_TARGET is unset — name the repository to audit," >&2' \
+      '        echo "as a git URL or a path to a checkout mounted here" >&2' \
+      '        exit 2; }' \
+      '    case "${CRUSTIFY_TARGET}" in' \
+      '        /*) [ -d "${CRUSTIFY_TARGET}/.git" ] || {' \
+      '            echo "no git repo at ${CRUSTIFY_TARGET} — mount the checkout" >&2' \
+      '            echo "there, e.g. -v /path/to/repo:${CRUSTIFY_TARGET}:ro" >&2' \
+      '            exit 2; } ;;' \
+      '    esac' \
+      '    echo "[crustify-audit] cloning ${CRUSTIFY_TARGET}"' \
+      '    git clone ${CRUSTIFY_TARGET_REF:+--branch "${CRUSTIFY_TARGET_REF}"} \' \
+      '        "${CRUSTIFY_TARGET}" "$target" || exit 2' \
+      'else' \
+      '    echo "[crustify-audit] reusing $target ($(git -C "$target" rev-parse --abbrev-ref HEAD))"' \
+      'fi' \
+      '[ -f "$target/Cargo.toml" ] || [ -f "$target/crustify/rust/Cargo.toml" ] || {' \
+      '    echo "no crate in $target — looked for Cargo.toml there and at" >&2' \
+      '    echo "crustify/rust/." >&2; exit 2; }' \
       '# Checked here rather than left to the CLI: an agent with no usable auth' \
       '# issues no request and exits 0, which reads as a hunt that found nothing.' \
-      '# A campaign tree hard-codes ffibox at this path; see the header.' \
-      'if [ ! -f /subject/Cargo.toml ] && [ ! -d /opt/ffibox ]; then' \
-      '    echo "/subject is a campaign tree (crate at crustify/rust) and its" >&2' \
-      '    echo "manifests reference /opt/ffibox — mount an ffibox checkout" >&2' \
-      '    echo "there, or cargo cannot load the workspace." >&2; exit 2' \
-      'fi' \
       'case "${CRUSTIFY_BILLING}" in' \
       '    subscription) ;;' \
       '    api)' \
@@ -187,8 +215,8 @@ RUN printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' \
       '    *) echo "bad CRUSTIFY_BILLING: ${CRUSTIFY_BILLING}" >&2; exit 2 ;;' \
       'esac' \
       'case "${CRUSTIFY_VERB}" in' \
-      '    unsafe) exec python3 -m crustify_audit.cli /subject unsafe "$@" ;;' \
-      '    ub) exec python3 -m crustify_audit.cli /subject ub \' \
+      '    unsafe) exec python3 -m crustify_audit.cli "$target" unsafe "$@" ;;' \
+      '    ub) exec python3 -m crustify_audit.cli "$target" ub \' \
       '            --model "${CRUSTIFY_MODEL}" \' \
       '            --billing "${CRUSTIFY_BILLING}" \' \
       '            --timeout "${CRUSTIFY_TIMEOUT}" "$@" ;;' \
@@ -197,6 +225,6 @@ RUN printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' \
       > /usr/local/bin/crustify-audit-run \
     && chmod +x /usr/local/bin/crustify-audit-run
 
-# The agent starts in the workspace it audits.
-WORKDIR /subject
+# The agent starts in the repository it audits; the entrypoint clones it here.
+WORKDIR /work
 CMD ["crustify-audit-run"]
