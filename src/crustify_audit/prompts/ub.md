@@ -4,7 +4,6 @@ reachable from safe code**.
 Workspace under audit: `{workspace}`
 Your scratch dir:      `{scratch}`   (yours entirely — working files, repros)
 Artifact root:         `{crustify_dir}`
-Focus:                 `{focus}`
 Instruments available: `{instruments}`
 Wall-clock budget:     `{budget}`
 

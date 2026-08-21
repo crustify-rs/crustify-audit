@@ -1,7 +1,7 @@
 """cli.py — `crustify-audit`.
 
     crustify-audit <workspace> [--out DIR] unsafe [--json]
-    crustify-audit <workspace> [--out DIR] ub     [--model M] [--billing B] [--focus F] [--timeout MIN]
+    crustify-audit <workspace> [--out DIR] ub     [--model M] [--billing B] [--timeout MIN]
 
 TWO VERBS, AND THE SPLIT IS THE POINT.
 
@@ -88,8 +88,6 @@ def build_parser() -> argparse.ArgumentParser:
                         "token unless `--bare`, and codex reads auth.json and "
                         "401s on OPENAI_API_KEY unless the provider is declared "
                         "with an env_key. A missing key fails at launch.")
-    h.add_argument("--focus", default=None, metavar="TEXT",
-                   help="Narrow the hunt, e.g. 'the format module' or 'iterators'.")
     h.add_argument("--timeout", type=int, default=30, metavar="MINUTES",
                    dest="timeout",
                    help="Wall-clock ceiling for ONE agent (default 30, 0 "
@@ -133,7 +131,7 @@ def _cmd_ub(layout: Layout, args) -> int:
               "so the agent cannot check its own reproductions. Install with: "
               "rustup component add miri --toolchain nightly",
               file=sys.stderr)
-    agent = AuditAgent(layout, model=args.model, focus=args.focus,
+    agent = AuditAgent(layout, model=args.model,
                        timeout_s=(args.timeout * 60) or None,
                        billing=args.billing)
 

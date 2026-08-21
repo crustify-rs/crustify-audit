@@ -69,13 +69,11 @@ class AuditAgent:
         layout: Layout,
         *,
         model: str | None = None,
-        focus: str | None = None,
         timeout_s: int | None = None,
         billing: str = "subscription",
     ) -> None:
         self.layout = layout
         self.model = model or self.model
-        self.focus = focus
         self.timeout_s = timeout_s
         #: `subscription` | `api` — see the backends, which is where it changes
         #: the argv rather than the environment.
@@ -138,7 +136,6 @@ class AuditAgent:
             # and the layout disagree about a structure that is not negotiable.
             "crustify_dir": str(self.layout.root),
             "scratch": str(self.layout.scratch),
-            "focus": self.focus or "(none — work the seed in rank order)",
             # The agent cannot see a clock. Without this it cannot budget, and
             # a SIGTERM at the deadline reads to it as an unexplained death.
             "budget": (f"{self.timeout_s // 60} minutes" if self.timeout_s
