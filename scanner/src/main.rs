@@ -101,6 +101,42 @@ struct Scan<'a> {
     sites: Vec<Site>,
     structs: Vec<StructDef>,
     item_stack: Vec<String>,
+    /// Inclusive 1-based line ranges of `#[cfg(test)]` items, skipped by the
+    /// walk and subtracted from `code_lines`.
+    test_spans: Vec<(usize, usize)>,
+}
+
+/// True if `attrs` carry a `#[cfg(..)]` naming `test`, including the nested
+/// `all(test, ..)` / `any(test, ..)` forms. Matching an IDENT rather than the
+/// token text keeps `#[cfg(feature = "test")]` out, where `test` is a string.
+fn is_cfg_test(attrs: &[syn::Attribute]) -> bool {
+    fn has_test_ident(ts: proc_macro2::TokenStream) -> bool {
+        ts.into_iter().any(|t| match t {
+            proc_macro2::TokenTree::Ident(i) => i == "test",
+            proc_macro2::TokenTree::Group(g) => has_test_ident(g.stream()),
+            _ => false,
+        })
+    }
+    attrs.iter().any(|a| {
+        a.path().is_ident("cfg")
+            && match &a.meta {
+                syn::Meta::List(l) => has_test_ident(l.tokens.clone()),
+                _ => false,
+            }
+    })
+}
+
+/// The attributes of any item, for the `cfg(test)` test above.
+fn item_attrs(i: &syn::Item) -> &[syn::Attribute] {
+    use syn::Item::*;
+    match i {
+        Const(x) => &x.attrs, Enum(x) => &x.attrs, ExternCrate(x) => &x.attrs,
+        Fn(x) => &x.attrs, ForeignMod(x) => &x.attrs, Impl(x) => &x.attrs,
+        Macro(x) => &x.attrs, Mod(x) => &x.attrs, Static(x) => &x.attrs,
+        Struct(x) => &x.attrs, Trait(x) => &x.attrs, TraitAlias(x) => &x.attrs,
+        Type(x) => &x.attrs, Union(x) => &x.attrs, Use(x) => &x.attrs,
+        _ => &[],
+    }
 }
 
 fn line_of(src: &str, span: proc_macro2::Span) -> usize {
@@ -185,6 +221,20 @@ impl<'ast, 'a> Visit<'ast> for Scan<'a> {
             }
         }
         syn::visit::visit_expr_call(self, node);
+    }
+
+    fn visit_item(&mut self, node: &'ast syn::Item) {
+        // A `#[cfg(test)]` item is not in a normal build, so it is not part of
+        // the crate's unsafe surface. Recording its extent lets `code_lines`
+        // drop it too, which keeps numerator and denominator over one body of
+        // code: an inline `mod tests` otherwise adds its lines to the ratio's
+        // bottom and its `unsafe` to the top.
+        if is_cfg_test(item_attrs(node)) {
+            let sp = syn::spanned::Spanned::span(node);
+            self.test_spans.push((sp.start().line, sp.end().line));
+            return;
+        }
+        syn::visit::visit_item(self, node);
     }
 
     fn visit_item_struct(&mut self, node: &'ast syn::ItemStruct) {
@@ -375,13 +425,6 @@ fn main() {
             .to_string_lossy()
             .to_string();
         counts.files += 1;
-        counts.code_lines += src
-            .lines()
-            .filter(|l| {
-                let t = l.trim();
-                !t.is_empty() && !t.starts_with("//")
-            })
-            .count();
         let mut scan = Scan {
             file: &rel,
             src: &src,
@@ -389,10 +432,23 @@ fn main() {
             sites: Vec::new(),
             structs: Vec::new(),
             item_stack: Vec::new(),
+            test_spans: Vec::new(),
         };
         for item in &ast.items {
             scan.visit_item(item);
         }
+        // Counted after the walk, which is what knows where the test items are.
+        counts.code_lines += src
+            .lines()
+            .enumerate()
+            .filter(|(i, l)| {
+                let ln = i + 1;
+                let t = l.trim();
+                !t.is_empty()
+                    && !t.starts_with("//")
+                    && !scan.test_spans.iter().any(|(a, b)| ln >= *a && ln <= *b)
+            })
+            .count();
         counts.unsafe_blocks += scan.counts.unsafe_blocks;
         counts.unsafe_fns += scan.counts.unsafe_fns;
         counts.pub_unsafe_fns += scan.counts.pub_unsafe_fns;
