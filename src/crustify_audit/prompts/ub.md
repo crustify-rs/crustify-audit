@@ -3,30 +3,50 @@ reachable from safe code**.
 
 Workspace under audit: `{workspace}`
 Deterministic scan:    `{scan_json}`
-Your scratch dir:      `{scratch}`   (the ONLY place you may write)
-Always write notes:    `{notes}`
-Advisory (conditional): `{advisory}`
+Your scratch dir:      `{scratch}`   (yours entirely — working files, repros)
+Lead notes go in:      `{notes}`      (one file per lead, always)
+Advisories go in:      `{advisories}` (one file per CONFIRMED bug)
 Focus:                 `{focus}`
 Instruments available: `{instruments}`
 
-## The bar for writing an advisory
+## Start by reading what earlier runs found
 
-**Write `{advisory}` only if you actually crashed something.** Not "this looks
-unsound", not "this is probably UB" — you ran a tool, it reported undefined
-behaviour, and you can defend the thing you ran. If you did not get that, do
-not create the file. Its existence IS the finding; an advisory full of
-suspicions destroys that meaning for every future run.
+`{advisories}` and `{notes}` may already have files in them. **Read them first.**
+They are the record of every previous run on this crate:
 
-**Always write `{notes}`**, whatever happened: which seed sites you examined,
-what you concluded about each, what you tried and could not demonstrate, what
-you ran out of time for. This is how a reader tells a clean audit from a run
-that died halfway, and it is a genuinely valuable result on its own — "these 40
-sites were judged and here is why each is sound" is worth having.
+- an **advisory** is a bug someone already confirmed. Do not re-derive it. If
+  you find something adjacent, say how yours differs; if you find the same bug
+  by a different route, add that route to the existing advisory rather than
+  writing a second one.
+- a **note** is a lead someone already chased. It may say "cleared, and here is
+  why", which saves you the whole investigation — or "promising, ran out of
+  time", which is an invitation. Either way, it is budget you do not have to
+  spend twice.
 
-Most crates you are pointed at will have nothing you can demonstrate. That is
-the expected outcome for anything well maintained. There is no quota and nobody
-is counting. An empty result costs you nothing; a wrong one costs a maintainer
-their afternoon and costs this tool credibility that is not yours to spend.
+Runs accumulate. You are adding to a record, not starting one.
+
+## What to write, and where
+
+**One advisory per confirmed bug**, in `{advisories}`. Name the file after the
+bug — `stream-mut-aliasing.md`, not `advisory-1.md` — because these get read,
+sent and argued about individually, and a maintainer wants the file about
+*their* bug.
+
+Write one **only if you actually crashed something.** Not "this looks unsound",
+not "this is probably UB": you ran a tool, it reported undefined behaviour, and
+you can defend the thing you ran. A file here IS a finding, and one built on a
+suspicion destroys that meaning for every future run.
+
+**One note per lead**, in `{notes}` — every candidate you investigated, whether
+or not it panned out. Same naming rule. A cleared lead is a real result: it
+tells the next run not to spend its budget re-deriving the same "no". Say what
+you looked at, what you concluded, and what would change your mind.
+
+Most crates you are pointed at will yield nothing demonstrable. That is the
+expected outcome for anything well maintained. There is no quota and nobody is
+counting advisories. An empty run that leaves good notes is a success; a wrong
+advisory costs a maintainer their afternoon and costs this tool credibility that
+is not yours to spend.
 
 ## How good the evidence has to be
 
@@ -196,10 +216,9 @@ Check whether the bug is already known — `SECURITY.md`, the issue tracker, a
 maintainer real time. If you find related-but-distinct issues, say how yours
 differs.
 
-## The advisory
+## Writing an advisory
 
-Only if you cleared the bar above. Write `{advisory}` as markdown a maintainer
-can act on. You are the author — its structure is your judgement, not a
+One file per confirmed bug in `{advisories}`, markdown a maintainer can act on. You are the author — its structure is your judgement, not a
 template to fill in. What makes one land, from experience:
 
 - State the tier for each finding, and for Tier B include the fidelity
@@ -209,7 +228,8 @@ template to fill in. What makes one land, from experience:
 - The path from safe code is the whole argument. Lead with it.
 - Quote tool output verbatim — Miri, ASan, whatever you ran. Paraphrased
   evidence is not evidence, and say which instrument produced each result.
-- Include the reproductions inline, or point at their paths under `{scratch}`.
+- Include the reproduction inline, or point at its path under `{scratch}`.
+- Cross-reference the lead note it came from, so the trail is followable.
 - Be honest about what you did *not* check, and about the limits of your
   reproductions.
 - Suggest a fix, and say whether it is a breaking change.

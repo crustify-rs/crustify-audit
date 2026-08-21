@@ -8,15 +8,20 @@ and bail with "no crustify/ under repo_root"; the audit that motivated this
 tool was of a third-party crate with none of that, and could not have been run
 through either.
 
-Artifacts land in ``<workspace>/.crustify-audit/`` -- inside the audited tree so
-they travel with it, and named so a single ``.gitignore`` line covers them. Pass
-``--out`` to keep the audited tree pristine.
+Artifacts land in ``<workspace>/crustify/`` -- the same directory name
+crustify-cli uses at a repo root, so auditing a crate that IS a crustify
+campaign target puts the audit beside the campaign rather than in a second
+place. Inside the audited tree on purpose: notes and advisories are about that
+crate and should travel with it, and accumulate across runs.
+
+``--out`` redirects everything when the subject must stay pristine -- a
+read-only checkout, or a crate you have no business writing to.
 """
 from __future__ import annotations
 
 from pathlib import Path
 
-ARTIFACT_DIR = ".crustify-audit"
+ARTIFACT_DIR = "crustify"
 
 
 class Layout:
@@ -31,24 +36,32 @@ class Layout:
         return self.root / "unsafe.json"
 
     # ---- `ub`: the agentic half
+    #
+    # ONE FILE PER THING, and the directories are the memory. A later run reads
+    # what earlier runs left rather than being handed it by a flag: no plumbing,
+    # and the record is the same artifact a human reads. It also makes the two
+    # populations separately greppable -- confirmed bugs are not mixed in with
+    # candidates that did not pan out.
+
+    @property
+    def advisories(self) -> Path:
+        """One advisory per CONFIRMED bug. A file here means something crashed.
+
+        Per-bug rather than one document, because bugs are reported, fixed and
+        argued about one at a time -- a maintainer wants the file about THEIR
+        bug, not a chapter of a combined report.
+        """
+        return self.root / "advisories"
+
     @property
     def notes(self) -> Path:
-        """ALWAYS written: what was examined and what was cleared.
+        """One note per LEAD investigated, whether or not it panned out.
 
-        This is the done signal, not the advisory -- because absence of an
-        advisory has to mean "nothing demonstrated", and that is only readable
-        if a clean run leaves something behind. Without it you cannot tell a
-        clean audit from an agent that died at 40% context."""
-        return self.root / "notes.md"
-
-    @property
-    def advisory(self) -> Path:
-        """Written ONLY when the agent obtained an actual crash through a
-        reproduction it can defend. Its existence is the finding.
-
-        Markdown, not a schema: the harness does not dictate what a report
-        should look like, only when one is warranted."""
-        return self.root / "advisory.md"
+        This is the audit trail and the anti-duplication record at once. A lead
+        that was chased and cleared is a result: it stops the next run spending
+        its budget re-deriving the same "no".
+        """
+        return self.root / "notes"
 
     @property
     def scratch(self) -> Path:

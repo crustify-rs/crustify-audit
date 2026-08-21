@@ -68,11 +68,13 @@ def build_parser() -> argparse.ArgumentParser:
                     "reproductions, checks them under miri, and writes the "
                     "advisory itself — the harness supplies a seed and a "
                     "scratch directory and nothing else. It never writes to the "
-                    "audited workspace. It ALWAYS writes notes.md saying what "
-                    "it examined, and writes advisory.md ONLY when it actually "
-                    "crashed something: no advisory means nothing was "
-                    "demonstrated. notes.md is the done signal, so a re-run is "
-                    "a no-op — delete it to hunt again.")
+                    "audited workspace outside its `crustify/` directory. It "
+                    "writes one note per lead investigated into crustify/notes/ "
+                    "and one advisory per CONFIRMED bug into "
+                    "crustify/advisories/ — an advisory means something actually "
+                    "crashed. Runs ACCUMULATE: there is no skip, and the agent "
+                    "reads what earlier runs left before starting, so a second "
+                    "run extends the record instead of re-deriving it.")
     h.add_argument("--model", default=None, metavar="PROVIDER/MODEL",
                    help="e.g. anthropic/claude-opus-5, openai/gpt-5.6. The "
                         "provider prefix selects the backend and is mandatory.")
@@ -119,25 +121,28 @@ def _cmd_ub(layout: Layout, args) -> int:
               file=sys.stderr)
     agent = AuditAgent(layout, model=args.model, focus=args.focus,
                        timeout_s=(args.timeout * 60) or None)
-    notes = agent.run()
-    if notes is None:
-        print("[crustify-audit] the agent left no notes — it did not finish. "
-              f"Check {layout.logs} for its transcript.", file=sys.stderr)
-        return 1
 
-    if not layout.advisory.is_file():
-        print(f"[crustify-audit] no advisory — nothing demonstrated.")
-        print(f"[crustify-audit] what was examined: {notes}")
-        print("\n  The agent writes an advisory only when it actually crashed "
-              "something.\n  Its absence is the result, not a failure — read "
-              "the notes to see what\n  was judged.")
-        return 0
+    # There is no skip: runs accumulate. Say what is already on disk so the
+    # caller knows this run is adding to a record rather than starting one --
+    # and knows it is about to spend either way.
+    was = agent.counts()
+    if any(was):
+        print(f"[crustify-audit] existing record: {was[0]} advisor"
+              f"{'y' if was[0] == 1 else 'ies'}, {was[1]} lead note(s). "
+              f"The agent reads these before it starts.")
 
-    print(f"[crustify-audit] advisory -> {layout.advisory}")
-    print(f"[crustify-audit] notes    -> {notes}")
-    print(f"[crustify-audit] reproductions: {layout.scratch}")
-    print("\n  Triage: run the reproductions yourself, then check each matches "
-          "the\n  source line it cites. Both hold -> real.")
+    now = agent.run()
+    new_adv, new_leads = now[0] - was[0], now[1] - was[1]
+
+    print(f"[crustify-audit] advisories : {now[0]} ({new_adv:+d})  {layout.advisories}")
+    print(f"[crustify-audit] lead notes : {now[1]} ({new_leads:+d})  {layout.notes}")
+    print(f"[crustify-audit] repros     : {layout.scratch}")
+    if now[0] == 0:
+        print("\n  No advisories: nothing was demonstrated. That is a result, "
+              "not a failure —\n  read the lead notes to see what was judged.")
+    else:
+        print("\n  Triage each advisory: run its reproduction yourself, then "
+              "check it matches\n  the source line it cites. Both hold -> real.")
     return 0
 
 

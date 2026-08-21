@@ -17,6 +17,11 @@ crustify-audit /path/to/crate unsafe
 crustify-audit /path/to/crate ub --model anthropic/claude-opus-5
 ```
 
+Artifacts land in `<crate>/crustify/` — `advisories/`, `notes/`, `scratch/`,
+`logs/`, `unsafe.json`. Same directory name crustify-cli uses, so auditing a
+campaign target puts the audit beside the campaign. `--out` redirects it all
+when the subject must stay pristine.
+
 There is no `report` verb. The agent writes the advisory; a template the
 harness fills in would flatten exactly the judgement the agent is there to
 exercise.
@@ -62,13 +67,18 @@ check misses it entirely.
 
 ## Triage
 
-**No `advisory.md` means nothing was demonstrated.** The agent writes one only
-when it actually crashed something — not when a pattern looks unsound. That is
-the first and cheapest filter: no file, nothing to triage. `notes.md` is always
-written and says what was examined, so a clean audit is distinguishable from an
+**An empty `crustify/advisories/` means nothing was demonstrated.** The agent
+writes an advisory only when it actually crashed something — one file per bug,
+named after the bug. `crustify/notes/` holds one note per lead it chased,
+whether or not that lead panned out, so a clean audit is distinguishable from an
 agent that died halfway.
 
-When there *is* an advisory, two questions per finding:
+Runs accumulate. There is no skip and no idempotency check: the agent reads
+both directories before starting, so a second run extends the record — skipping
+a cleared lead, adding a route to an existing advisory — instead of paying to
+re-derive it.
+
+For each advisory, two questions:
 
 | | who answers | if no |
 |---|---|---|

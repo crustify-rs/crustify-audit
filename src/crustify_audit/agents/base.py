@@ -50,9 +50,12 @@ class AuditAgent:
     """One UB hunt over one workspace.
 
     The agent is handed the deterministic seed (``unsafe.json``) and a scratch
-    directory. It always leaves a record of what it examined; it writes an
-    advisory only when it actually crashed something. It never edits the
-    audited crate.
+    directory. It leaves one lead note per candidate it investigated and one
+    advisory per bug it actually crashed. It never edits the audited crate.
+
+    Runs ACCUMULATE. The agent reads what earlier runs left in ``crustify/advisories/``
+    and ``crustify/notes/`` before starting, so a second run extends the record instead
+    of re-deriving it.
     """
 
     name = "crustify-audit"
@@ -76,19 +79,15 @@ class AuditAgent:
 
     # ------------------------------------------------------------------ run
 
-    def run(self) -> Path | None:
-        """Drive the hunt. Returns the notes path once the agent has run.
+    def run(self) -> tuple[int, int]:
+        """Drive the hunt. Returns (advisories, leads) counts after the run.
 
-        The DONE signal is the notes, not the advisory: a clean audit writes no
-        advisory, and gating on a file that a successful run may legitimately
-        never create would re-run the agent forever.
+        THERE IS NO DONE SIGNAL AND NO SKIP, deliberately. Runs accumulate:
+        each reads what earlier ones left in `crustify/advisories/` and `crustify/notes/` and adds
+        to them. Skipping when an artifact exists would make the second run --
+        the one that builds on the first -- impossible. The cost is that `ub`
+        always spends, so the CLI reports what is already there before starting.
         """
-        out = self.layout.notes
-        if out.is_file():
-            print(f"[crustify-audit] {self.stage}: {out} already exists, skipping. "
-                  f"Delete it to re-run.")
-            return out
-
         seed = self.layout.scan
         if not seed.is_file():
             raise SystemExit(
@@ -96,9 +95,11 @@ class AuditAgent:
                 f"{self.layout.workspace} unsafe` first — the agent hunts over "
                 f"the deterministic seed, it does not scan from scratch.")
 
-        # The only thing the harness guarantees about the scratch dir is that
-        # it exists. What the agent builds in it is the agent's business.
-        self.layout.scratch.mkdir(parents=True, exist_ok=True)
+        # The harness guarantees these exist and nothing more. How an advisory
+        # is named, what a lead note says, what a reproduction looks like --
+        # all the agent's business.
+        for d in (self.layout.scratch, self.layout.advisories, self.layout.notes):
+            d.mkdir(parents=True, exist_ok=True)
 
         from crustify_audit.agents.backends import get_backend
         from crustify_audit.models import resolve as resolve_model
@@ -115,7 +116,13 @@ class AuditAgent:
                 log=log,
                 timeout_s=self.timeout_s,
             )
-        return out if out.is_file() else None
+        return self.counts()
+
+    def counts(self) -> tuple[int, int]:
+        """(advisories, leads) on disk. The harness counts files; it does not
+        parse them."""
+        n = lambda d: len(list(d.glob("*.md"))) if d.is_dir() else 0
+        return n(self.layout.advisories), n(self.layout.notes)
 
     # -------------------------------------------------------------- prompt
 
@@ -129,7 +136,7 @@ class AuditAgent:
         return {
             "workspace": str(self.layout.workspace),
             "scan_json": str(self.layout.scan),
-            "advisory": str(self.layout.advisory),
+            "advisories": str(self.layout.advisories),
             "notes": str(self.layout.notes),
             "scratch": str(self.layout.scratch),
             "focus": self.focus or "(none — work the seed in rank order)",
@@ -148,8 +155,10 @@ class AuditAgent:
             "reachable from safe code.\n\n"
             "A finding you cannot demonstrate is a hypothesis. Say which you "
             "are reporting.\n\n"
-            "HARD RULE. Never modify the audited workspace. Write only inside "
-            "your scratch directory. You are a reader everywhere else."
+            "HARD RULE. Inside the audited workspace you may write ONLY under "
+            "its `crustify/` directory -- your notes and advisories belong "
+            "there and nowhere else. Its source, tests and build files are "
+            "read-only to you. Your scratch directory is yours entirely."
         )
 
     # ------------------------------------------------------- instruments
