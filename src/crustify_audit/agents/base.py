@@ -88,13 +88,6 @@ class AuditAgent:
         the one that builds on the first -- impossible. The cost is that `ub`
         always spends, so the CLI reports what is already there before starting.
         """
-        seed = self.layout.scan
-        if not seed.is_file():
-            raise SystemExit(
-                f"{self.stage}: no {seed}. Run `crustify-audit "
-                f"{self.layout.workspace} unsafe` first — the agent hunts over "
-                f"the deterministic seed, it does not scan from scratch.")
-
         # The harness guarantees these exist and nothing more. How an advisory
         # is named, what a lead note says, what a reproduction looks like --
         # all the agent's business.
@@ -135,9 +128,10 @@ class AuditAgent:
         missing = ", ".join(k for k, v in inst.items() if not v)
         return {
             "workspace": str(self.layout.workspace),
-            "scan_json": str(self.layout.scan),
-            "advisories": str(self.layout.advisories),
-            "notes": str(self.layout.notes),
+            # ONE root, not two leaves. `advisories/` and `notes/` are fixed
+            # names under it, so injecting each separately would let the prompt
+            # and the layout disagree about a structure that is not negotiable.
+            "crustify_dir": str(self.layout.root),
             "scratch": str(self.layout.scratch),
             "focus": self.focus or "(none — work the seed in rank order)",
             "instruments": have + (f"    (not detected: {missing})" if missing else ""),

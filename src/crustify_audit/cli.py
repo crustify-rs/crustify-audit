@@ -63,8 +63,9 @@ def build_parser() -> argparse.ArgumentParser:
     h = sub.add_parser(
         "ub",
         help="AGENTIC hunt for undefined behaviour. Costs money.",
-        description="Drive ONE agent over the seed from `unsafe`, hunting UB "
-                    "reachable from safe code. The agent builds its own "
+        description="Drive ONE agent hunting UB reachable from safe code. It "
+                    "runs the `unsafe` static pass itself, as often and as "
+                    "narrowly as it wants — no prior run is required. The agent builds its own "
                     "reproductions, checks them under miri, and writes the "
                     "advisory itself — the harness supplies a seed and a "
                     "scratch directory and nothing else. It never writes to the "

@@ -7,14 +7,14 @@ Two halves, and the split is the point:
 | | | |
 |---|---|---|
 | `unsafe` | **deterministic** | a `syn` pass over the crate's unsafe surface. Counts, plus a ranked list of sites worth a closer look. No LLM, no network, no build. Same tree, same bytes. |
-| `ub` | **agentic** | one agent over that seed, hunting undefined behaviour reachable from safe code — choosing its own instruments and authoring the advisory itself. |
+| `ub` | **agentic** | one agent hunting undefined behaviour reachable from safe code. It runs the `unsafe` pass itself, picks its own instruments, and authors the advisories. |
 
 Separate verbs, not one command with a flag, so a caller always knows whether
 the answer in front of them is reproducible.
 
 ```sh
-crustify-audit /path/to/crate unsafe
-crustify-audit /path/to/crate ub --model anthropic/claude-opus-5
+crustify-audit /path/to/crate unsafe      # deterministic, standalone
+crustify-audit /path/to/crate ub          # agentic; runs the pass itself
 ```
 
 Artifacts land in `<crate>/crustify/` — `advisories/`, `notes/`, `scratch/`,
