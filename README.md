@@ -6,7 +6,7 @@ Two halves, and the split is the point:
 
 | | | |
 |---|---|---|
-| `unsafe` | **deterministic** | a `syn` pass over the crate's unsafe surface. Counts, plus a ranked list of sites worth a closer look. No LLM, no network, no build. Same tree, same bytes. |
+| `unsafe` | **deterministic** | two passes over the crate: a rustc driver for the unsafe metrics, and a `syn` pass for a ranked list of sites worth a closer look. No LLM, no network. Same tree, same bytes. |
 | `ub` | **agentic** | one agent hunting undefined behaviour reachable from safe code. It runs the `unsafe` pass itself, picks its own instruments, and authors the advisories. |
 
 Separate verbs, not one command with a flag, so a caller always knows whether
@@ -134,16 +134,22 @@ schema cannot express.
 score**. A wrapper over C must contain unsafe, and folding 600 small audited
 blocks into 200 large ones improves the number while making the crate worse.
 
-`#[cfg(test)]` items are skipped by the walk and subtracted from `code_lines`,
-so both sides of a ratio measure the code a normal build compiles. An inline
-`mod tests` would otherwise put its lines in the denominator and its `unsafe`
-in the numerator.
+Both passes measure the code a normal build compiles: the driver because `cfg`
+stripping happens before HIR, the scanner because it skips `#[cfg(test)]`
+items. An inline `mod tests` would otherwise put its lines in the denominator
+of every ratio and its `unsafe` in the numerator.
 
-The figures that *are* categorical are the ones measuring what crosses the
-public API boundary, where the caller has to discharge the obligation:
+The figures that *are* categorical are the ones measuring an obligation the
+seam does not excuse:
 
-- `pub_unsafe_fns` — each is an invariant pushed onto every user
-- `raw_ptr_in_pub_sig` — each is a lifetime the type system is not tracking
+- `unsafe_fns` minus `unsafe_fns_seam` — an `unsafe fn` outside a conversion
+  routine or the C-ABI gateway pushes its invariant onto every caller, and
+  `unsafe_fns_pub` says how many leave the crate
+- `raw_ptr_args + raw_ptr_rets` minus `raw_ptr_seam` — each remaining position
+  is a lifetime the type system is not tracking
+- `ref_to_type_wrapper` — a reference over memory C writes through a pointer it
+  retains. Target 0, and **vacuously** 0 wherever `wrapper_newtypes` is 0, so
+  read the pair
 
 Those are the comparisons worth making between two wrappers over the same C
 library.
@@ -153,13 +159,19 @@ library.
 Working end to end. `ub` has run against git2-rs, rust-openssl and
 rust-ffmpeg, each producing an advisory and a set of notes.
 
-- The scanner is **syntactic**, and reads the source as written: it sees no
-  macro-generated code, and resolves no types or crate boundaries. The
-  motivating bug is a syntactic shape, and `syn` finds it without needing the
-  crate to compile — which is what lets the pass run against a wrapper whose C
-  dependencies are absent. `crustify-cli audit` carries a rustc driver over
-  HIR and typeck for the cases that need resolution; the two measure different
-  populations and their numbers are not comparable.
+- The counts come from the driver vendored in `driver/`, which is
+  `crustify-cli`'s `utils/unsafe_metrics` copied verbatim, so `crustify-audit
+  unsafe` and `crustify-cli audit` report the same numbers for the same tree.
+  It is a copy, not a shared crate: an edit made here and not there makes the
+  two disagree while both claim the same metric names.
+- The driver compiles the crate, which an FFI wrapper often cannot do without
+  its system libraries. Then `counts` is `null`, `counts_unavailable` says
+  why, and the seed half still runs — no substitute numbers under the same
+  field names.
+- The scanner stays **syntactic** and finds what the driver does not look for:
+  `transmute` constructors, `Deref` exposure, mixed-reference structs. It reads
+  source as written, so it sees no macro-generated code and resolves no types;
+  its own tallies sit under `seed_counts`, apart from the driver's.
 - One agent, by design. Splitting the hunt across parallel agents is worth it
   once a single one is demonstrably good.
 - The agent both produces findings and checks them.
@@ -167,11 +179,13 @@ rust-ffmpeg, each producing an advisory and a set of notes.
 ## Layout
 
 ```
-scanner/                 the deterministic pass (Rust, syn)
+driver/                  the unsafe metrics (Rust, rustc driver over HIR)
+scanner/                 the seed pass (Rust, syn)
 src/crustify_audit/
   cli.py                 unsafe / ub
   layout.py              artifact paths; the plain-cargo-workspace contract
-  unsafe_scan.py         drives the scanner, derives ratios
+  unsafe_scan.py         runs both passes, derives ratios
+  driver.py              builds and runs the rustc driver
   models.py              <provider>/<model> -> backend
   agentlog.py            per-agent transcript + usage
   agents/base.py         the single audit agent

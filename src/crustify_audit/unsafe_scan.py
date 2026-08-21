@@ -1,6 +1,13 @@
 """unsafe_scan.py — the DETERMINISTIC half, behind `crustify-audit … unsafe`.
 
-Drives the `syn`-based scanner over a workspace and writes ``unsafe.json``.
+Writes ``unsafe.json`` from two passes over one workspace:
+
+  * ``counts`` — the vendored rustc driver (:mod:`crustify_audit.driver`), the
+    same one ``crustify-cli audit`` runs, so the metrics are identical to its
+    and comparable across both tools. ``null`` when the crate does not build.
+  * ``sites`` / ``mixed_ref_structs`` / ``seed_counts`` — the `syn` scanner,
+    which needs no build and finds the shapes the driver does not look for:
+    `transmute` constructors, `Deref` exposure, mixed-reference structs.
 
 WHY THIS IS A SEPARATE PHASE, AND NOT SOMETHING THE AGENT DOES.
 
@@ -30,6 +37,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from crustify_audit import driver
 from crustify_audit.layout import Layout
 
 _SCANNER_CRATE = Path(__file__).resolve().parents[2] / "scanner"
@@ -73,6 +81,19 @@ def compose(layout: Layout) -> dict:
     if out.returncode != 0:
         raise SystemExit(f"metrics: scanner failed:\n{out.stderr}")
     doc = json.loads(out.stdout)
+    # The scanner's own tallies are a DIFFERENT population from the driver's —
+    # pre-expansion, untyped, crate-blind — so they move out of `counts` rather
+    # than sitting under names a reader would compare with crustify-cli's.
+    doc["seed_counts"] = doc.pop("counts", {})
+    try:
+        doc["counts"] = driver.measure(layout.workspace)
+        doc["counts_unavailable"] = None
+    except driver.DriverUnavailable as e:
+        # No counts rather than substitute ones: see driver.py. The seed half
+        # above already ran, so the `ub` agent still gets its list.
+        doc["counts"] = None
+        doc["counts_unavailable"] = str(e)
+        print(f"[crustify-audit] no counts: {e}".rstrip())
     doc["derived"] = _derive(doc)
     return doc
 
@@ -88,15 +109,23 @@ def _derive(doc: dict) -> dict:
     crate pushes across its public API boundary, where the caller has to
     discharge it.
     """
-    c = doc.get("counts", {})
-    pub = c.get("pub_fns") or 0
+    c = doc.get("counts") or {}
+    if not c:
+        return {}
     loc = c.get("code_lines") or 0
     ub = c.get("unsafe_blocks") or 0
+    fns = c.get("unsafe_fns") or 0
+    positions = (c.get("raw_ptr_args") or 0) + (c.get("raw_ptr_rets") or 0)
+    seam = c.get("raw_ptr_seam") or 0
     return {
-        # The two that matter, and the two the README makes claims about.
-        "pub_unsafe_fn_ratio": round((c.get("pub_unsafe_fns") or 0) / pub, 4) if pub else None,
-        "raw_ptr_pub_sig_ratio": round((c.get("raw_ptr_in_pub_sig") or 0) / pub, 4) if pub else None,
+        # Categorical: an obligation pushed onto callers, and one the seam does
+        # not excuse.
+        "unsafe_fn_pub_ratio": round((c.get("unsafe_fns_pub") or 0) / fns, 4) if fns else None,
+        "unsafe_fn_smell": fns - (c.get("unsafe_fns_seam") or 0),
+        "raw_ptr_smell": positions - seam,
+        "raw_ptr_seam_ratio": round(seam / positions, 4) if positions else None,
         # Context, explicitly NOT a quality score. See the docstring.
+        "unsafe_loc_ratio": round((c.get("unsafe_block_code_lines") or 0) / loc, 4) if loc else None,
         "loc_per_unsafe_block": round(loc / ub, 1) if ub else None,
     }
 
@@ -109,20 +138,31 @@ def write(layout: Layout) -> Path:
 
 
 def summarize(doc: dict) -> str:
-    c = doc.get("counts", {})
+    c = doc.get("counts") or {}
+    sc = doc.get("seed_counts") or {}
     d = doc.get("derived", {})
     sites = doc.get("sites", [])
     top = [s for s in sites if s.get("suspicion", 0) >= 70]
-    lines = [
-        f"  files {c.get('files')}   code lines {c.get('code_lines')}",
-        f"  unsafe blocks        {c.get('unsafe_blocks')}"
-        f"   (1 per {d.get('loc_per_unsafe_block')} lines — context, not a score)",
-        f"  pub unsafe fn        {c.get('pub_unsafe_fns')} of {c.get('pub_fns')} pub fns"
-        f"   ({d.get('pub_unsafe_fn_ratio')})",
-        f"  raw ptr in pub sig   {c.get('raw_ptr_in_pub_sig')}"
-        f"   ({d.get('raw_ptr_pub_sig_ratio')})",
-        f"  transmute sites      {c.get('transmutes')}",
-        f"  Deref / DerefMut     {c.get('deref_impls')} / {c.get('deref_mut_impls')}",
+    lines = [f"  files {sc.get('files')}"]
+    if c:
+        lines += [
+            f"  code lines           {c.get('code_lines')}",
+            f"  unsafe blocks        {c.get('unsafe_blocks')}"
+            f"   ({d.get('unsafe_loc_ratio')} of code lines — context, not a score)",
+            f"  unsafe fn            {c.get('unsafe_fns')}"
+            f"   ({c.get('unsafe_fns_pub')} pub, {c.get('unsafe_fns_seam')} at the seam)",
+            f"  raw ptr positions    {(c.get('raw_ptr_args') or 0) + (c.get('raw_ptr_rets') or 0)}"
+            f"   ({c.get('raw_ptr_seam')} sanctioned, smell {d.get('raw_ptr_smell')})",
+            f"  ref to layout type   {c.get('ref_to_type_wrapper')}"
+            f"   of {c.get('wrapper_newtypes')} layout newtypes — target 0",
+            f"  ffi calls            {c.get('ffi_calls')}",
+        ]
+    else:
+        lines.append(f"  counts               unavailable — "
+                     f"{doc.get('counts_unavailable')}")
+    lines += [
+        f"  transmute sites      {sc.get('transmutes')}",
+        f"  Deref / DerefMut     {sc.get('deref_impls')} / {sc.get('deref_mut_impls')}",
         f"  mixed-ref structs    {len(doc.get('mixed_ref_structs') or [])}",
         "",
         f"  {len(sites)} seed sites, {len(top)} at suspicion >= 70",
