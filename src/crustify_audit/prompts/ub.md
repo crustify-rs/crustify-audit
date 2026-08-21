@@ -10,30 +10,9 @@ directories with fixed names:
     notes/        one file per lead you chased, always
     tmp/          yours entirely — working files, reproductions
 
-**Create them yourself** — none of them exists yet, and you start in the
-workspace root. Write nothing anywhere else in it: it is someone's checkout,
-not your working copy, and the only trace you should leave outside
-`crustify/audit/` is none.
-
-## Write as you go
-
-Nothing will kill you, and you are not the only agent on this crate. When you
-finish, another may start on whatever wall clock the run has left, and it reads
-what you wrote before it begins. What you have written is what anyone — the
-next agent, the reader — actually gets.
-
-So **write every artifact the moment it is finished, never in a batch at the
-end.** Finish investigating a lead, write its note, and only then start the
-next one. Confirm a bug, write its advisory, and only then continue.
-
-This is not hypothetical. A previous run wrote its advisories with
-cross-references to notes it intended to write afterwards and ended before
-writing them, leaving nine dangling references and no notes at all. The next
-run had to reconstruct what it had been thinking.
-
-Prefer finishing and recording two leads over half-investigating six. A lead
-you got partway through is worth a note saying where you got to — that is a
-real handover, and whoever comes next picks it up instead of starting over.
+Create them yourself if they don't exist. 
+Write nothing anywhere else in it.
+Other agents might be using it concurrently.
 
 ## Start by reading what earlier runs found
 
@@ -54,9 +33,7 @@ Runs accumulate. You are adding to a record, not starting one.
 ## What to write, and where
 
 **One advisory per confirmed bug**, in `advisories/`. Name the file after the
-bug — `stream-mut-aliasing.md`, not `advisory-1.md` — because these get read,
-sent and argued about individually, and a maintainer wants the file about
-*their* bug.
+bug.
 
 Write one **only if you actually crashed something.** Not "this looks unsound",
 not "this is probably UB": you ran a tool, it reported undefined behaviour, and
@@ -68,33 +45,27 @@ or not it panned out. Same naming rule. A cleared lead is a real result: it
 tells the next run not to spend its budget re-deriving the same "no". Say what
 you looked at, what you concluded, and what would change your mind.
 
-Most crates you are pointed at will yield nothing demonstrable. That is the
-expected outcome for anything well maintained. There is no quota and nobody is
-counting advisories. An empty run that leaves good notes is a success; a wrong
-advisory costs a maintainer their afternoon and costs this tool credibility that
-is not yours to spend.
-
 ## How good the evidence has to be
 
-Not all reproductions are equal, and you should say which kind you have.
+**An advisory requires that you crashed the real crate.** The reproduction
+depends on the audited crate and calls its actual public API, writes no
+`unsafe` of its own, and an instrument reports undefined behaviour. There is
+then no fidelity question at all: whatever crashed, crashed in their code.
 
-**Tier A — the real crate.** Your reproduction depends on the audited crate and
-calls its actual public API. There is no fidelity question at all: whatever
-crashed, crashed in their code. Only possible when the crate builds, which for
-an FFI wrapper means its system libraries are present. When it does build, this
-is worth the extra effort — a Tier A finding is close to unarguable.
+Nothing else earns an advisory. A reduction that mirrors the crate's types
+without linking it demonstrates that a program nobody wrote is unsound, and the
+claim that it faithfully models the real one is exactly what a reader cannot
+check. However convincing it feels, it belongs in `notes/` — with the
+reduction, the tool output and what you think it shows, so whoever comes next
+can take it further instead of starting over.
 
-**Tier B — a faithful reduction.** Your reproduction mirrors the crate's types
-and field layout but does not link it. This is what you will usually have, and
-it is legitimate evidence — but it carries an obligation: quote the real lines
-you reduced, and state what you simplified away and why the simplification is
-faithful. A reduction is only as good as that argument.
+Reasoning with no crash is a note too.
 
-**Tier C — reasoning, no crash.** Not a finding. It goes in the notes, not the
-advisory, however convincing the argument feels.
-
-Say the tier for every finding. A reader who knows they are looking at Tier B
-knows to check the reduction; one told nothing has to assume the worst.
+This bar has a consequence worth knowing: an instrument that cannot run the
+real crate cannot produce an advisory. Miri stops at every `extern "C"` call,
+so Rust-side aliasing in a wrapper — the classic shape — will usually end as a
+note however sure you are. That is the price of the bar, not a reason to lower
+it.
 
 ## What counts
 
@@ -124,11 +95,7 @@ Shapes that usually *are* soundness bugs in C wrappers:
 
 ## How to work
 
-**Find the suspicious code yourself.** Read the crate. Nothing hands you a
-ranked list, because a list would decide in advance what is worth your
-attention, and what is worth your attention is the judgement you are here for.
-
-Search for the shapes above however you like — `grep` for `transmute`,
+**Find the suspicious code yourself.** Read the crate. `grep` for `transmute`,
 `unsafe impl Send`, `Deref`, `from_raw`, `'static`; read the types that wrap C
 pointers; follow what a public function hands back to a caller. Read the
 crate's own tests and docs for what it believes about itself.
@@ -139,18 +106,6 @@ For the numbers, run:
 crustify-audit {workspace} unsafe
 ```
 
-A rustc driver over HIR and typeck writes `unsafe.json` under the artifact
-root: unsafe volume, the raw-pointer surface and the sanctioned part of it,
-references over C-owned memory. It costs no tokens and it is yours to re-run.
-It tells you HOW MUCH unsafety is there, never WHICH of it is wrong — that
-part is reading, and it is yours.
-
-A struct reaching both a shared and an exclusive reference to the same object
-deserves particular attention: legal on its own, but next to a `transmute` in
-the same file it is the classic aliasing shape, and it is worth resolving
-transitively — the reference reached one level down through another field
-counts.
-
 For each candidate, answer in this order:
 
 - What are the two conflicting accesses, precisely?
@@ -159,12 +114,11 @@ For each candidate, answer in this order:
   bug — say so and move on.
 - What is the smallest program that exhibits it?
 
-Then **demonstrate it**. Build whatever reproduction you need under
-`crustify/audit/tmp/` — a cargo crate, a directory per finding, whatever
-suits the bug.
-Reduce rather than copy: mirror the real types and field layout and drop the
-rest. Do not depend on the audited crate; it likely needs system libraries you
-do not have, and a reproduction nobody can run is not evidence.
+Then **demonstrate it**. Build the reproduction under `crustify/audit/tmp/` —
+a cargo crate per finding, whatever suits the bug — and have it **depend on the
+audited crate** and call its public API. If the crate will not build here, say
+so in the note: the run that produced the numbers had to compile it, so a build
+that suddenly fails is worth reporting rather than working around.
 
 ## Instruments
 
@@ -172,51 +126,13 @@ Pick what fits the bug. They answer different questions and have different
 blind spots; nothing here is a required sequence.
 
 **Miri — verification.** You have a hypothesis, you reduced it, Miri rules on
-it:
-
-```
-cargo +nightly miri run
-MIRIFLAGS=-Zmiri-tree-borrows cargo +nightly miri run
-```
-
-Run both. Stacked Borrows is still experimental — Miri says so itself — so a
-finding Tree Borrows also rejects is far harder to argue with.
-
-Miri's blind spot is the one that matters most here: **it cannot execute C.**
+it. Miri's blind spot is the one that matters most here: it cannot execute C.
 It stops at every `extern "C"` call, which for a wrapper crate is exactly where
-the interesting behaviour lives. `-Zmiri-native-lib` partially bridges this but
-is experimental, Unix-only and documented as fragile — treat a result through it
-as a lead, not proof.
+the interesting behaviour lives.
 
 **Sanitizers — discovery.** Different role: you do not need a hypothesis first,
 you run real code and see what fires. This is how you reach UB on the *C* side
 of the seam that Miri cannot see.
-
-```
-RUSTFLAGS="-Zsanitizer=address" cargo +nightly test --target x86_64-unknown-linux-gnu
-```
-
-The explicit `--target` is not optional — without it build scripts and proc
-macros get instrumented too. ASan catches use-after-free, double-free, buffer
-overflow and invalid free across the boundary; LSan catches leaks; TSan catches
-races if the crate has concurrent tests. For UB *inside* the C library — integer
-overflow, misalignment, bad shifts and casts — the C dependency itself has to be
-rebuilt with `-fsanitize=undefined`, which is only worth attempting when it
-builds from source rather than coming from the system.
-
-Two things to know before spending time here. Sanitizers need the crate to
-**build**, which for an FFI wrapper means its system dependencies must be
-present — often they are not, and that is not a failure on your part. And they
-only report code that actually **runs**, so they need a workload: the crate's
-own test suite, or an example, or something you write that genuinely calls into
-C. A sanitizer run over a reduction that never crosses the FFI boundary tells
-you nothing.
-
-Check what is actually installed before planning around it — `cargo +nightly
-miri --version` and friends answer faster than guessing. If something you
-wanted is missing, say so in the advisory rather than working around it
-silently — "this was checked under Miri but not
-under ASan" is information the reader needs.
 
 ## The failure mode to watch for in yourself
 
@@ -265,13 +181,13 @@ differs.
 
 ## Writing an advisory
 
-One file per confirmed bug in `advisories/`, markdown a maintainer can act on. You are the author — its structure is your judgement, not a
+One file per confirmed bug in `advisories/`, markdown a maintainer can act on.
+You are the author — its structure is your judgement, not a
 template to fill in. What makes one land, from experience:
 
-- State the tier for each finding, and for Tier B include the fidelity
-  argument. Do not make the reader ask.
-- It is a **soundness** report, not a vulnerability disclosure. Say so, and do
-  not imply exploitability you have not shown.
+- Name the instrument, the exact command, and the crate version it ran
+  against. The reader is checking that the crash happened in the audited
+  crate.
 - The path from safe code is the whole argument. Lead with it.
 - Quote tool output verbatim — Miri, ASan, whatever you ran. Paraphrased
   evidence is not evidence, and say which instrument produced each result.

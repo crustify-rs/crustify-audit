@@ -108,12 +108,17 @@ For each advisory, two questions:
 Survives both → real. Both are a couple of minutes, and you only reach them
 when an advisory exists at all.
 
-Question 2 disappears entirely for a **Tier A** finding, where the reproduction
-depends on the audited crate and calls its real public API. There is no fidelity
-question when the crash happened in their code. Tier A needs the crate to build,
-which for an FFI wrapper often it does not — so most findings are **Tier B**, a
-reduction mirroring the crate's types, and the advisory is required to say which
-it is and to argue the reduction is faithful.
+Question 2 rarely bites, because an advisory requires the reproduction to
+depend on the audited crate and call its real public API — there is no fidelity
+question when the crash happened in their code. A reduction that merely mirrors
+the crate's types is a **note**, not an advisory: it shows that a program
+nobody wrote is unsound, and the claim that it models the real one is the one
+thing a reader cannot check.
+
+The cost is that an instrument which cannot run the real crate cannot produce
+an advisory. Miri stops at every `extern "C"` call, so Rust-side aliasing in a
+wrapper usually ends as a note — deliberately, since the alternative is
+advisories nobody can verify.
 
 ## Instruments
 
