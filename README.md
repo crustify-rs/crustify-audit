@@ -140,8 +140,7 @@ to say in the advisory what it could not check.
 
 ## Where the line sits
 
-The harness runs the scan, hands the agent a seed and a writable directory, and
-starts it. Everything after that — what to investigate, how to reduce it, what a
+The harness hands the agent a workspace path and starts it. Everything after that — what to investigate, how to reduce it, what a
 reproduction looks like, how to structure the advisory — is the agent's.
 
 The prompt says what a good report looks like and why Miri under both borrow

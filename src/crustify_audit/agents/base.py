@@ -19,11 +19,12 @@ Dropped, because crustify-audit is one agent over one workspace:
 
   * the stage/tier/output class hierarchy. There is one role, so there is one
     class and no ``SKILLS`` tuple to vary.
-  * worktree isolation. Nothing here writes to the audited crate; the agent's
-    working directory IS its scratch space, so the audited tree is somewhere it
-    only ever reads.
+  * worktree isolation. The agent starts in the audited crate and is told to
+    write only under its artifact root. A worktree would buy real containment
+    and cost a checkout per run; the trade is deliberate and the prompt carries
+    the rule.
   * the DAG, the scope sets, the wave scheduler. There is no ordering problem:
-    the scan hands over a ranked list and the agent walks it.
+    the agent decides what to look at.
 
 WHERE THE LINE SITS. The harness hands over a workspace and a
 writable directory, and starts the agent. Everything after that — what to
@@ -111,12 +112,6 @@ class AuditAgent:
         `timeout_s` of `None` runs ONE agent. A budget of nothing is not a
         licence to loop forever.
         """
-        # The harness guarantees these exist and nothing more. How an advisory
-        # is named, what a lead note says, what a reproduction looks like --
-        # all the agent's business.
-        for d in (self.layout.scratch, self.layout.advisories, self.layout.notes):
-            d.mkdir(parents=True, exist_ok=True)
-
         from crustify_audit.agents.backends import get_backend
         from crustify_audit.models import resolve as resolve_model
 
@@ -134,7 +129,11 @@ class AuditAgent:
                     prompt_template=self._prompt(),
                     arguments=self._arguments(),
                     system_preamble=self.system_preamble(),
-                    work_dir=str(self.layout.scratch),
+                    # The workspace, because it is the only directory that is
+                # certain to exist: the agent creates the artifact tree itself,
+                # so nothing can start inside it. The prompt is what keeps
+                # writes out of the checkout — see `system_preamble`.
+                work_dir=str(self.layout.workspace),
                     log=log,
                     billing=self.billing,
                 )
