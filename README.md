@@ -19,8 +19,7 @@ crustify-audit /path/to/crate ub          # agentic; runs the pass itself
 
 Artifacts land in `<crate>/crustify/` — `advisories/`, `notes/`, `scratch/`,
 `logs/`, `unsafe.json`. Same directory name crustify-cli uses, so auditing a
-campaign target puts the audit beside the campaign. `--out` redirects it all
-when the subject must stay pristine.
+campaign target puts the audit beside the campaign.
 
 The agent authors the advisory itself, in prose, because the judgement it is
 there to exercise is the part a filled-in template would flatten.
@@ -37,18 +36,17 @@ install, `PYTHONPATH=src python3 -m crustify_audit.cli` takes the same
 arguments.
 
 ```sh
-crustify-audit <workspace> [--out DIR] unsafe [--json]
-crustify-audit <workspace> [--out DIR] ub     [--model PROVIDER/MODEL] [--billing B] [--timeout MIN]
+crustify-audit <workspace> unsafe [--json]
+crustify-audit <workspace> ub     [--model PROVIDER/MODEL] [--billing B] [--timeout MIN]
 ```
 
 | flag | verb | default | effect |
 |---|---|---|---|
 | `<workspace>` | both | — | cargo workspace to audit; an ordinary crate |
-| `--out DIR` | both | `<workspace>/crustify/` | where artifacts go; point elsewhere to leave the tree untouched. Precedes the verb |
-| `--json` | `unsafe` | off | print the document instead of the summary |
+| `--json` | `unsafe` | off | print `unsafe.json` to stdout instead of the human summary. The file is written either way |
 | `--model PROVIDER/MODEL` | `ub` | backend default | e.g. `anthropic/claude-opus-5`, `openai/gpt-5.6`; the prefix selects the backend and is mandatory |
 | `--billing subscription\|api` | `ub` | `subscription` | how the provider CLI authenticates. `api` adds `--bare` (claude) or an env-key provider block (codex) — neither uses a key in the environment without it; a missing key fails at launch |
-| `--timeout MIN` | `ub` | `30` | wall-clock ceiling for the ONE agent the run spawns, enforced by `timeout(1)` around the CLI process — TERM at the deadline, KILL 30s later. Not a budget it fills with repeated agents. The agent is told its deadline. `0` disables. Successive runs accumulate rather than split a budget |
+| `--timeout MIN` | `ub` | `30` | wall-clock BUDGET for the run. Agents are spawned one after another until it is reached, and are never killed — each finishes on its own, so the run overshoots by however long the last one takes. Each agent reads what the previous wrote. `0` runs exactly one agent |
 
 `unsafe` needs a nightly toolchain with `rustc-dev` and `llvm-tools` for the
 counts, and the crate to compile. Neither is needed for the seed sites.

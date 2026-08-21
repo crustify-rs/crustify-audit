@@ -36,12 +36,18 @@ like; it does not hand over a form.
 """
 from __future__ import annotations
 
+import time
+
 import shutil
 import subprocess
 from pathlib import Path
 
 from crustify_audit.agentlog import AgentLog, open_agent_log
 from crustify_audit.layout import Layout
+
+#: An agent ending faster than this did not hunt; it failed. Two in a row stop
+#: the loop instead of spending the rest of the budget on the same failure.
+_MIN_AGENT_SECONDS = 60
 
 _PKG_ROOT = Path(__file__).resolve().parent.parent
 
@@ -82,13 +88,27 @@ class AuditAgent:
     # ------------------------------------------------------------------ run
 
     def run(self) -> tuple[int, int]:
-        """Drive the hunt. Returns (advisories, leads) counts after the run.
+        """Drive the hunt until the deadline. Returns (advisories, leads).
 
         THERE IS NO DONE SIGNAL AND NO SKIP, deliberately. Runs accumulate:
         each reads what earlier ones left in `crustify/advisories/` and `crustify/notes/` and adds
         to them. Skipping when an artifact exists would make the second run --
         the one that builds on the first -- impossible. The cost is that `ub`
         always spends, so the CLI reports what is already there before starting.
+
+        `timeout_s` IS A BUDGET, NOT A LEASH. An agent is never killed: each
+        runs to its own completion, and only then does the loop ask whether the
+        deadline has passed. So the wall clock OVERSHOOTS by however long the
+        last agent takes, which is the price of never truncating a reduction
+        half-written. Killing at a deadline throws away exactly the work that
+        was closest to done.
+
+        Respawning is the same accumulation the CLI does across invocations,
+        moved inside one: agent N+1 reads what agent N wrote before it starts,
+        so the second pass extends the record instead of re-deriving it.
+
+        `timeout_s` of `None` runs ONE agent. A budget of nothing is not a
+        licence to loop forever.
         """
         # The harness guarantees these exist and nothing more. How an advisory
         # is named, what a lead note says, what a reproduction looks like --
@@ -100,18 +120,47 @@ class AuditAgent:
         from crustify_audit.models import resolve as resolve_model
 
         route = resolve_model(self.model)
-        with open_agent_log(self.layout.logs, self.stage) as log:
-            get_backend(route.backend).run(
-                name=self.name,
-                model=route.model,
-                prompt_template=self._prompt(),
-                arguments=self._arguments(),
-                system_preamble=self.system_preamble(),
-                work_dir=str(self.layout.scratch),
-                log=log,
-                timeout_s=self.timeout_s,
-                billing=self.billing,
-            )
+        backend = get_backend(route.backend)
+        started = time.monotonic()
+        deadline = started + self.timeout_s if self.timeout_s else None
+        spawned, short = 0, 0
+        while True:
+            was, t0 = self.counts(), time.monotonic()
+            remaining = int(deadline - t0) if deadline else None
+            with open_agent_log(self.layout.logs, self.stage) as log:
+                backend.run(
+                    name=self.name,
+                    model=route.model,
+                    prompt_template=self._prompt(),
+                    arguments=self._arguments(remaining),
+                    system_preamble=self.system_preamble(),
+                    work_dir=str(self.layout.scratch),
+                    log=log,
+                    billing=self.billing,
+                )
+            spawned += 1
+            took, now = time.monotonic() - t0, time.monotonic()
+            adv, notes = self.counts()
+            left = int(deadline - now) if deadline else 0
+            print(f"[crustify-audit] agent {spawned} ended after "
+                  f"{took / 60:.1f}m — advisories {adv} (+{adv - was[0]}), "
+                  f"notes {notes} (+{notes - was[1]})"
+                  + (f", {left // 60}m of budget left" if deadline else ""))
+            if deadline is None or now >= deadline:
+                break
+            # An agent that dies on the way up would otherwise be respawned
+            # until the budget is gone, paying each time for the same failure.
+            # Two in a row that end almost immediately is that, not a hunt.
+            short = short + 1 if took < _MIN_AGENT_SECONDS else 0
+            if short >= 2:
+                print(f"[crustify-audit] two agents ended within "
+                      f"{_MIN_AGENT_SECONDS}s — stopping rather than "
+                      f"respawning into the same failure.")
+                break
+        if deadline and spawned > 1:
+            print(f"[crustify-audit] {spawned} agents over "
+                  f"{(time.monotonic() - started) / 60:.1f}m "
+                  f"(budget {self.timeout_s // 60}m)")
         return self.counts()
 
     def counts(self) -> tuple[int, int]:
@@ -125,7 +174,7 @@ class AuditAgent:
     def _prompt(self) -> str:
         return (_PKG_ROOT / "prompts" / "ub.md").read_text()
 
-    def _arguments(self) -> dict:
+    def _arguments(self, remaining_s: int | None = None) -> dict:
         inst = self.instruments(self.layout)
         have = ", ".join(k for k, v in inst.items() if v) or "none detected"
         missing = ", ".join(k for k, v in inst.items() if not v)
@@ -136,10 +185,12 @@ class AuditAgent:
             # and the layout disagree about a structure that is not negotiable.
             "crustify_dir": str(self.layout.root),
             "scratch": str(self.layout.scratch),
-            # The agent cannot see a clock. Without this it cannot budget, and
-            # a SIGTERM at the deadline reads to it as an unexplained death.
-            "budget": (f"{self.timeout_s // 60} minutes" if self.timeout_s
-                       else "no limit"),
+            # The agent cannot see a clock. This is what is LEFT of the run's
+            # budget, not the whole of it: successive agents get less, and the
+            # last one gets what remains. Nothing truncates it — the figure is
+            # for pacing, and an agent that overruns finishes anyway.
+            "budget": (f"{max(remaining_s, 0) // 60} minutes remaining"
+                       if remaining_s is not None else "no limit"),
             "instruments": have + (f"    (not detected: {missing})" if missing else ""),
         }
 

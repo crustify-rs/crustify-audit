@@ -1,7 +1,7 @@
 """cli.py — `crustify-audit`.
 
-    crustify-audit <workspace> [--out DIR] unsafe [--json]
-    crustify-audit <workspace> [--out DIR] ub     [--model M] [--billing B] [--timeout MIN]
+    crustify-audit <workspace> unsafe [--json]
+    crustify-audit <workspace> ub     [--model M] [--billing B] [--timeout MIN]
 
 TWO VERBS, AND THE SPLIT IS THE POINT.
 
@@ -44,9 +44,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("workspace",
                    help="Path to the cargo workspace to audit. An ORDINARY crate — "
                         "no crustify/ directory, campaign or CodeQL database needed.")
-    p.add_argument("--out", default=None, metavar="DIR",
-                   help="Where artifacts go (default: <workspace>/crustify/). "
-                        "Point elsewhere to leave the audited tree untouched.")
     sub = p.add_subparsers(dest="command", required=True)
 
     m = sub.add_parser(
@@ -90,18 +87,16 @@ def build_parser() -> argparse.ArgumentParser:
                         "with an env_key. A missing key fails at launch.")
     h.add_argument("--timeout", type=int, default=30, metavar="MINUTES",
                    dest="timeout",
-                   help="Wall-clock ceiling for ONE agent (default 30, 0 "
-                        "disables). Set it to the whole budget you intend to "
-                        "spend — do NOT chunk a budget into several shorter "
-                        "runs, which just terminates a working agent early. "
-                        "Successive runs are for ACCUMULATING over time, not "
-                        "for splitting one sitting. This is the only cap that "
-                        "works under subscription auth — `--max-budget-usd` "
-                        "meters API-call spend, of which there is none, and the "
-                        "CLI has no turn limit. A terminated agent may have "
-                        "written a partial advisory or none: absence of an "
-                        "advisory after a timeout does NOT mean it found "
-                        "nothing.")
+                   help="Wall-clock BUDGET for the run (default 30, 0 runs one "
+                        "agent). Agents are spawned one after another until the "
+                        "budget is reached, and are never killed: each finishes "
+                        "on its own, so the run OVERSHOOTS by however long the "
+                        "last one takes. Each agent reads what the previous one "
+                        "wrote, so the record accumulates within the run as it "
+                        "does across runs. This is the only cap that works under "
+                        "subscription auth — `--max-budget-usd` meters API-call "
+                        "spend, of which there is none, and the CLI has no turn "
+                        "limit.")
     return p
 
 
@@ -165,7 +160,7 @@ def main() -> None:
     if not ws.is_dir():
         print(f"error: workspace does not exist: {ws}", file=sys.stderr)
         raise SystemExit(2)
-    layout = Layout(ws, out=args.out)
+    layout = Layout(ws)
     fn = {"unsafe": _cmd_unsafe, "ub": _cmd_ub}
     raise SystemExit(fn[args.command](layout, args))
 

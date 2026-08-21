@@ -28,7 +28,7 @@ class Backend(Protocol):
         system_preamble: str,
         work_dir: str,
         log: AgentLog,
-        timeout_s: int | None = None,
+        billing: str = "subscription",
     ) -> None:
         """Drive one agent to completion.
 
@@ -38,11 +38,13 @@ class Backend(Protocol):
         replace, so each backend places the same string its own way and the
         content never diverges.
 
-        ``timeout_s`` is a WALL-CLOCK ceiling. It is the only cap that works
-        under subscription auth: `--max-budget-usd` meters API-call spend, of
-        which there is none, and this CLI has no turn limit. A killed agent may
-        have written a partial advisory or none at all, which the caller has to
-        report honestly rather than treat as "found nothing".
+        ``billing`` selects how the provider CLI authenticates, and each
+        backend applies it to the ARGV: neither CLI reads a key from the
+        environment on its own.
+
+        The agent runs to its own completion. Nothing here enforces a deadline
+        — the run's budget is spent by :meth:`AuditAgent.run` deciding whether
+        to spawn another, never by truncating one that is working.
 
         The return value is intentionally unused: success is judged by what is
         on disk, not by an exit code the agent controls.

@@ -14,8 +14,6 @@ campaign target puts the audit beside the campaign rather than in a second
 place. Inside the audited tree on purpose: notes and advisories are about that
 crate and should travel with it, and accumulate across runs.
 
-``--out`` redirects everything when the subject must stay pristine -- a
-read-only checkout, or a crate you have no business writing to.
 """
 from __future__ import annotations
 
@@ -25,9 +23,9 @@ ARTIFACT_DIR = "crustify"
 
 
 class Layout:
-    def __init__(self, workspace: Path, out: Path | None = None) -> None:
+    def __init__(self, workspace: Path) -> None:
         self.workspace = Path(workspace).resolve()
-        self.root = Path(out).resolve() if out else self.workspace / ARTIFACT_DIR
+        self.root = self.workspace / ARTIFACT_DIR
 
     # ---- `unsafe`: the deterministic half
     @property
