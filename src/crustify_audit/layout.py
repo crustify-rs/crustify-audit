@@ -69,13 +69,14 @@ class Layout:
 
     @property
     def scratch(self) -> Path:
-        """The agent's writable area -- reproductions, miri output, notes.
+        """`tmp/` -- the agent's writable area: reproductions, miri output.
 
-        Outside the audited crate on purpose: the agent has no reason to write
-        there and every reason not to. What goes in it is the agent's business;
-        the harness only guarantees the directory exists.
+        Named for what it is, and kept under the artifact root beside the
+        advisories that cite it, so a reproduction stays findable from the
+        finding it backs. What goes in it is the agent's business; the harness
+        only guarantees the directory exists.
         """
-        return self.root / "scratch"
+        return self.root / "tmp"
 
     @property
     def logs(self) -> Path:

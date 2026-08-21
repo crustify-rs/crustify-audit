@@ -17,8 +17,8 @@ crustify-audit /path/to/crate unsafe      # deterministic, standalone
 crustify-audit /path/to/crate ub          # agentic; runs the pass itself
 ```
 
-Artifacts land in `<crate>/crustify/audit/` — `advisories/`, `notes/`,
-`scratch/`, `logs/`, `unsafe.json`. Under the directory crustify-cli uses, so
+Artifacts land in `<crate>/crustify/audit/` — `advisories/`, `notes/`, `tmp/`,
+`logs/`, `unsafe.json`. Under the directory crustify-cli uses, so
 auditing a campaign target puts the audit beside the campaign, in its own
 subdirectory so the two tools' artifacts stay separable.
 

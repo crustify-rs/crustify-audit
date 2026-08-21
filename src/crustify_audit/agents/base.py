@@ -55,9 +55,10 @@ _PKG_ROOT = Path(__file__).resolve().parent.parent
 class AuditAgent:
     """One UB hunt over one workspace.
 
-    The agent is handed a workspace and a scratch
-    directory. It leaves one lead note per candidate it investigated and one
-    advisory per bug it actually crashed. It never edits the audited crate.
+    The agent is handed the workspace path and nothing else; it derives the
+    artifact root from it and runs with `tmp/` as its working directory. It
+    leaves one lead note per candidate it investigated and one advisory per bug
+    it actually crashed. It never edits the audited crate.
 
     Runs ACCUMULATE. The agent reads what earlier runs left in ``crustify/audit/advisories/``
     and ``crustify/audit/notes/`` before starting, so a second run extends the record instead
@@ -126,13 +127,12 @@ class AuditAgent:
         spawned, short = 0, 0
         while True:
             was, t0 = self.counts(), time.monotonic()
-            remaining = int(deadline - t0) if deadline else None
             with open_agent_log(self.layout.logs, self.stage) as log:
                 backend.run(
                     name=self.name,
                     model=route.model,
                     prompt_template=self._prompt(),
-                    arguments=self._arguments(remaining),
+                    arguments=self._arguments(),
                     system_preamble=self.system_preamble(),
                     work_dir=str(self.layout.scratch),
                     log=log,
@@ -174,25 +174,19 @@ class AuditAgent:
     def _prompt(self) -> str:
         return (_PKG_ROOT / "prompts" / "ub.md").read_text()
 
-    def _arguments(self, remaining_s: int | None = None) -> dict:
-        inst = self.instruments(self.layout)
-        have = ", ".join(k for k, v in inst.items() if v) or "none detected"
-        missing = ", ".join(k for k, v in inst.items() if not v)
-        return {
-            "workspace": str(self.layout.workspace),
-            # ONE root, not two leaves. `advisories/` and `notes/` are fixed
-            # names under it, so injecting each separately would let the prompt
-            # and the layout disagree about a structure that is not negotiable.
-            "crustify_dir": str(self.layout.root),
-            "scratch": str(self.layout.scratch),
-            # The agent cannot see a clock. This is what is LEFT of the run's
-            # budget, not the whole of it: successive agents get less, and the
-            # last one gets what remains. Nothing truncates it — the figure is
-            # for pacing, and an agent that overruns finishes anyway.
-            "budget": (f"{max(remaining_s, 0) // 60} minutes remaining"
-                       if remaining_s is not None else "no limit"),
-            "instruments": have + (f"    (not detected: {missing})" if missing else ""),
-        }
+    def _arguments(self) -> dict:
+        """The one thing the agent cannot work out for itself.
+
+        Everything it was once handed besides this is DERIVABLE from the
+        workspace — the artifact root is `<workspace>/crustify/audit`, the
+        scratch dir sits under it — or better asked of the machine than read
+        from an answer the harness cached before the agent started, which is
+        what an instrument list is.
+
+        Every injected fact is a place the prompt and the layout can drift
+        apart, and one more thing for the agent to trust instead of check.
+        """
+        return {"workspace": str(self.layout.workspace)}
 
     def system_preamble(self) -> str:
         """The role and the one hard rule.
@@ -213,6 +207,9 @@ class AuditAgent:
         )
 
     # ------------------------------------------------------- instruments
+    #
+    # Only what the CLI warns with. WHICH instrument suits a candidate, and
+    # whether it is installed, are both the agent's to work out.
 
     @staticmethod
     def _ok(cmd: list[str]) -> bool:
@@ -226,31 +223,3 @@ class AuditAgent:
         return shutil.which("cargo") is not None and cls._ok(
             ["cargo", "+nightly", "miri", "--version"])
 
-    @classmethod
-    def instruments(cls, layout: Layout) -> dict[str, bool]:
-        """What is actually installed, so the prompt can say so.
-
-        Mechanism, not judgement: this reports availability and stops there.
-        WHICH instrument suits a given candidate is the agent's call, and the
-        prompt describes what each one is good for rather than prescribing an
-        order. Telling an agent "miri is not installed" is useful; telling it
-        "therefore use ASan" would be the harness deciding again.
-        """
-        cargo = shutil.which("cargo") is not None
-        nightly = cargo and cls._ok(["cargo", "+nightly", "--version"])
-        return {
-            "cargo": cargo,
-            "nightly": nightly,
-            "miri": cls.miri_available(),
-            # Sanitizers are nightly + an explicit --target (so build scripts and
-            # proc macros are not instrumented). Presence of nightly is the best
-            # cheap proxy; whether the crate actually LINKS under them depends on
-            # its C dependencies and can only be found out by trying.
-            "sanitizers": nightly,
-            # The one that decides whether sanitizers are usable at all: they
-            # instrument code that RUNS, so without a build there is nothing to
-            # instrument. Deliberately not a hard check -- `cargo build` on a
-            # crate needing system libraries can take minutes and fail for
-            # reasons that are not the agent's problem.
-            "builds": (layout.workspace / "Cargo.lock").is_file(),
-        }
