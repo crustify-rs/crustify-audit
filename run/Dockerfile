@@ -20,11 +20,18 @@
 #                        land on the host and survive `--rm`.
 #   /work                Named volume, and `HOME`. Everything the agent does
 #                        OUTSIDE the artifact tree lives here — a C library it
-#                        cloned and built, a toolchain it fetched, the CLI's own
+#                        cloned and built, the cargo registry, the CLI's own
 #                        config under `/work/.claude`. Without it that work is
 #                        in the container layer and `--rm` destroys it: one run
 #                        spent 25 minutes building libippcp with nasm and lost
 #                        all of it on exit.
+#
+#                        What does NOT need this volume is anything installed
+#                        at image BUILD time — the Rust toolchain, miri, cmake,
+#                        nasm. Those are in the image layer, so every container
+#                        has them. The image is the persistence layer for
+#                        installs; a dev library a subject needs every time
+#                        belongs in the apt line below, not in a volume.
 #
 # THE SUBJECT IS AN ORDINARY CARGO WORKSPACE. Point /subject at the directory
 # holding `Cargo.toml` — for a crustify campaign that is `<repo>/crustify/rust`,
@@ -127,13 +134,19 @@ ENV CRUSTIFY_TIMEOUT=60
 # the artifact tree lands here and survives `--rm` — including the provider
 # CLI's own config, which is why credentials mount at /work/.claude.
 #
-# rustup and cargo are pinned back to /root, because they resolve their homes
-# from HOME by default: with HOME on an empty volume, `cargo +nightly` finds no
-# toolchain, silently downloads a fresh nightly WITHOUT the components this
-# image installed, and the agent loses miri without being told why.
+# RUSTUP_HOME is pinned back to /root, because rustup resolves it from HOME:
+# with HOME on an empty volume, `cargo +nightly` finds no toolchain, silently
+# downloads a fresh nightly WITHOUT the components this image installs, and the
+# agent loses miri without being told why. The toolchain itself needs no volume
+# — it is installed at image BUILD time, so it is in the image layer and
+# present in every container.
+#
+# CARGO_HOME does go on the volume, for the registry: the proxies are found on
+# PATH and the toolchain through RUSTUP_HOME, so all that moves is the crate
+# cache, which a subject's build otherwise re-downloads every run.
 ENV HOME=/work \
     RUSTUP_HOME=/root/.rustup \
-    CARGO_HOME=/root/.cargo
+    CARGO_HOME=/work/.cargo
 RUN mkdir -p /work
 
 RUN printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' \

@@ -71,7 +71,7 @@ docker run --rm -it --name audit-ippcp \
 |---|---|---|
 | `/opt/crustify-audit` | read-write | this checkout; agents may fix the tool, so give them a reviewable branch |
 | `/subject` | bind, read-write | the cargo workspace under audit — for a campaign that is `<repo>/crustify/rust`, not the repo root. Advisories and notes land here |
-| `/work` | named volume, and `HOME` | everything the agent builds outside the artifact tree — a C library it cloned, a toolchain it fetched — plus the provider CLI's config at `/work/.claude`. Without it, `--rm` destroys all of it |
+| `/work` | named volume, and `HOME` | everything the agent builds outside the artifact tree — a C library it cloned, the cargo registry — plus the provider CLI's config at `/work/.claude`. Without it, `--rm` destroys all of it. The Rust toolchain, miri, cmake and nasm need no volume: they are installed at image build time and live in the image layer |
 
 | var | values | default |
 |---|---|---|
