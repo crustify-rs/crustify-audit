@@ -52,14 +52,8 @@ depends on the audited crate and calls its actual public API, writes no
 `unsafe` of its own, and an instrument reports undefined behaviour. There is
 then no fidelity question at all: whatever crashed, crashed in their code.
 
-Nothing else earns an advisory. A reduction that mirrors the crate's types
-without linking it demonstrates that a program nobody wrote is unsound, and the
-claim that it faithfully models the real one is exactly what a reader cannot
-check. However convincing it feels, it belongs in `notes/` — with the
-reduction, the tool output and what you think it shows, so whoever comes next
-can take it further instead of starting over.
-
-Reasoning with no crash is a note too.
+Nothing else earns an advisory. 
+Reasoning with no crash is a note.
 
 This bar has a consequence worth knowing: an instrument that cannot run the
 real crate cannot produce an advisory. Miri stops at every `extern "C"` call,
