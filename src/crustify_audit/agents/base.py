@@ -25,7 +25,7 @@ Dropped, because crustify-audit is one agent over one workspace:
   * the DAG, the scope sets, the wave scheduler. There is no ordering problem:
     the scan hands over a ranked list and the agent walks it.
 
-WHERE THE LINE SITS. The harness runs the scan, hands over a seed and a
+WHERE THE LINE SITS. The harness hands over a workspace and a
 writable directory, and starts the agent. Everything after that — what to
 investigate, how to reduce it, what a reproduction looks like, how to structure
 the advisory — is the agent's job. An earlier cut of this file pre-built a repro
@@ -55,7 +55,7 @@ _PKG_ROOT = Path(__file__).resolve().parent.parent
 class AuditAgent:
     """One UB hunt over one workspace.
 
-    The agent is handed the deterministic seed (``unsafe.json``) and a scratch
+    The agent is handed a workspace and a scratch
     directory. It leaves one lead note per candidate it investigated and one
     advisory per bug it actually crashed. It never edits the audited crate.
 

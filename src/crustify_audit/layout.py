@@ -36,7 +36,7 @@ class Layout:
     # ---- `unsafe`: the deterministic half
     @property
     def scan(self) -> Path:
-        """The scanner's output: counts + a ranked seed list. Reproducible."""
+        """The deterministic pass's output: the unsafe metrics. Reproducible."""
         return self.root / "unsafe.json"
 
     # ---- `ub`: the agentic half

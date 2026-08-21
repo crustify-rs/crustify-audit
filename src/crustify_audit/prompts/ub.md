@@ -119,24 +119,32 @@ Shapes that usually *are* soundness bugs in C wrappers:
 
 ## How to work
 
-**Run the static pass yourself** and read what it produces:
+**Find the suspicious code yourself.** Read the crate. Nothing hands you a
+ranked list, because a list would decide in advance what is worth your
+attention, and what is worth your attention is the judgement you are here for.
+
+Search for the shapes above however you like — `grep` for `transmute`,
+`unsafe impl Send`, `Deref`, `from_raw`, `'static`; read the types that wrap C
+pointers; follow what a public function hands back to a caller. Read the
+crate's own tests and docs for what it believes about itself.
+
+For the numbers, run:
 
 ```
 crustify-audit {workspace} unsafe
 ```
 
-It is a deterministic `syn` pass over the crate — counts, plus sites ranked by
-`suspicion` — and it writes `unsafe.json` under the artifact root. Re-run it
-scoped to a subdirectory whenever that is what you want; it is cheap, it costs
-no tokens, and it is yours to drive.
+A rustc driver over HIR and typeck writes `unsafe.json` under the artifact
+root: unsafe volume, the raw-pointer surface and the sanctioned part of it,
+references over C-owned memory. It costs no tokens and it is yours to re-run.
+It tells you HOW MUCH unsafety is there, never WHICH of it is wrong — that
+part is reading, and it is yours.
 
-The ranking is **ordering only**. The scanner cannot tell a sound
-`transmute_copy` from an unsound one, and a low score is not a clearance. Start
-at the top and judge everything yourself.
-
-`mixed_ref_structs` is worth particular attention: a struct reaching both a
-shared and an exclusive reference is legal on its own, but in a file that also
-transmutes it is the classic aliasing shape.
+A struct reaching both a shared and an exclusive reference to the same object
+deserves particular attention: legal on its own, but next to a `transmute` in
+the same file it is the classic aliasing shape, and it is worth resolving
+transitively — the reference reached one level down through another field
+counts.
 
 For each candidate, answer in this order:
 
@@ -264,8 +272,8 @@ template to fill in. What makes one land, from experience:
 - Be honest about what you did *not* check, and about the limits of your
   reproductions.
 - Suggest a fix, and say whether it is a breaking change.
-- Note anything you looked at and cleared. A reader needs to know the ranking
-  was judged rather than skimmed.
+- Note anything you looked at and cleared. A reader needs to know what was
+  judged, not just what was found.
 
 Three findings you can demonstrate beat twenty you suspect. The first false
 positive spends credibility you cannot buy back.

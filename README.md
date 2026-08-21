@@ -6,8 +6,8 @@ Two halves, and the split is the point:
 
 | | | |
 |---|---|---|
-| `unsafe` | **deterministic** | two passes over the crate: a rustc driver for the unsafe metrics, and a `syn` pass for a ranked list of sites worth a closer look. No LLM, no network. Same tree, same bytes. |
-| `ub` | **agentic** | one agent hunting undefined behaviour reachable from safe code. It runs the `unsafe` pass itself, picks its own instruments, and authors the advisories. |
+| `unsafe` | **deterministic** | a rustc driver over HIR and typeck: how much unsafety the crate has and where its boundary sits. No LLM, no network. Same tree, same bytes. |
+| `ub` | **agentic** | one agent reading the crate to find what is worth looking at, hunting undefined behaviour reachable from safe code, picking its own instruments and authoring the advisories. |
 
 Separate verbs, not one command with a flag, so a caller always knows whether
 the answer in front of them is reproducible.
@@ -49,28 +49,27 @@ crustify-audit <workspace> ub     [--model PROVIDER/MODEL] [--billing B] [--time
 | `--billing subscription\|api` | `ub` | `subscription` | how the provider CLI authenticates. `api` adds `--bare` (claude) or an env-key provider block (codex) — neither uses a key in the environment without it; a missing key fails at launch |
 | `--timeout MIN` | `ub` | `30` | wall-clock BUDGET for the run. Agents are spawned one after another until it is reached, and are never killed — each finishes on its own, so the run overshoots by however long the last one takes. Each agent reads what the previous wrote. `0` runs exactly one agent |
 
-`unsafe` needs a nightly toolchain with `rustc-dev` and `llvm-tools` for the
-counts, and the crate to compile. Neither is needed for the seed sites.
-`ub` needs `cargo +nightly miri` to check its own reproductions, and warns
-without it.
+`unsafe` needs a nightly toolchain with `rustc-dev` and `llvm-tools`, and the
+crate to compile; without either there are no counts and the reason is
+recorded. `ub` needs `cargo +nightly miri` to check its own reproductions, and
+warns without it.
 
 ## Why the deterministic half exists
 
-The agent could grep. It should not:
+Not because an agent could not count. Because a count it produced would be a
+sample: the measure is a pure function of the source tree, so two runs agree
+and a diff between them is a change in the crate rather than a change in the
+model's mood. That is what makes a number quotable.
 
-- **Reproducibility.** The composer's output is a pure function of the source
-  tree. A diff between two runs is a change in the crate, not a change in the
-  model's mood.
-- **Budget.** Enumeration is cheap and reasoning is expensive. Handing the agent
-  a ranked list spends its context on the part only it can do.
-- **Traceability.** A finding cites a seed site, so a reviewer can check the
-  agent looked where it says it looked.
+It also runs the same driver as `crustify-cli audit`, so a hand-written wrapper
+and a crustify-generated one are measured by one instrument and their numbers
+compare.
 
-The `suspicion` score is **ordering only**. The scanner cannot tell a sound
-`transmute_copy` from an unsound one — plenty are fine. A low score is not a
-clearance.
+What it does not do is decide what is worth looking at. That is the judgement
+`ub` exists for, and handing the agent a ranked list would make it in advance,
+on evidence a syntax pass cannot weigh.
 
-## What it looks for
+## What the agent looks for
 
 The shapes that are usually soundness bugs in C wrappers:
 
@@ -83,10 +82,9 @@ The shapes that are usually soundness bugs in C wrappers:
 5. **`Deref`/`DerefMut` exposure** that `mem::swap` can break invariants through.
 6. **`Send`/`Sync` asserted** over thread-affine C state.
 
-Mixed-reference structs are resolved **transitively**, which is load-bearing.
-The bug this tool was built after holds its exclusive reference directly and
-reaches its shared one a level down through another struct; a direct-fields-only
-check misses it entirely.
+Resolving these **transitively** is load-bearing. The bug this tool was built
+after holds its exclusive reference directly and reaches its shared one a level
+down through another struct; looking only at direct fields misses it entirely.
 
 ## Triage
 
@@ -158,10 +156,9 @@ schema cannot express.
 score**. A wrapper over C must contain unsafe, and folding 600 small audited
 blocks into 200 large ones improves the number while making the crate worse.
 
-Both passes measure the code a normal build compiles: the driver because `cfg`
-stripping happens before HIR, the scanner because it skips `#[cfg(test)]`
-items. An inline `mod tests` would otherwise put its lines in the denominator
-of every ratio and its `unsafe` in the numerator.
+The measure covers the code a normal build compiles: `cfg` stripping happens
+before HIR, so an inline `mod tests` puts neither its lines in the denominator
+of a ratio nor its `unsafe` in the numerator.
 
 The figures that *are* categorical are the ones measuring an obligation the
 seam does not excuse:
@@ -183,7 +180,7 @@ library.
 Working end to end. `ub` has run against git2-rs, rust-openssl and
 rust-ffmpeg, each producing an advisory and a set of notes.
 
-- The counts come from the driver vendored in `driver/`, which is
+- The counts come from the driver vendored in `src/driver/`, which is
   `crustify-cli`'s `utils/unsafe_metrics` copied verbatim, so `crustify-audit
   unsafe` and `crustify-cli audit` report the same numbers for the same tree.
   It is a copy, not a shared crate: an edit made here and not there makes the
@@ -192,10 +189,9 @@ rust-ffmpeg, each producing an advisory and a set of notes.
   its system libraries. Then `counts` is `null`, `counts_unavailable` says
   why, and the seed half still runs — no substitute numbers under the same
   field names.
-- The scanner stays **syntactic** and finds what the driver does not look for:
-  `transmute` constructors, `Deref` exposure, mixed-reference structs. It reads
-  source as written, so it sees no macro-generated code and resolves no types;
-  its own tallies sit under `seed_counts`, apart from the driver's.
+- Finding what is worth investigating is the agent's, not a scanner's. It
+  reads the crate, forms its own suspicions and defends them; `unsafe` gives it
+  the numbers and nothing else.
 - One agent, by design. Splitting the hunt across parallel agents is worth it
   once a single one is demonstrably good.
 - The agent both produces findings and checks them.
@@ -203,12 +199,11 @@ rust-ffmpeg, each producing an advisory and a set of notes.
 ## Layout
 
 ```
-driver/                  the unsafe metrics (Rust, rustc driver over HIR)
-scanner/                 the seed pass (Rust, syn)
+src/driver/              the unsafe metrics (Rust, rustc driver over HIR)
 src/crustify_audit/
   cli.py                 unsafe / ub
   layout.py              artifact paths; the plain-cargo-workspace contract
-  unsafe_scan.py         runs both passes, derives ratios
+  unsafe_scan.py         writes unsafe.json, derives ratios
   driver.py              builds and runs the rustc driver
   models.py              <provider>/<model> -> backend
   agentlog.py            per-agent transcript + usage

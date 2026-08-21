@@ -1,23 +1,20 @@
-"""driver.py — the resolution-aware half of the deterministic pass.
+"""driver.py — the deterministic pass.
 
-Runs the vendored rustc driver (``driver/``) over the subject workspace and
+Runs the vendored rustc driver (``src/driver/``) over the subject workspace and
 returns its tree-wide metrics block. This is the SAME driver ``crustify-cli
 audit`` runs, so the numbers under ``counts`` are its numbers, not an
-approximation of them.
+approximation of them, and a wrapper audited by either tool compares with one
+audited by the other.
 
-WHY NOT THE `syn` SCANNER'S COUNTS. The scanner reads source as written: it
-never sees macro-generated code, resolves no types, and cannot tell which crate
-a path came from. Its tallies are therefore a different population from the
-driver's, and publishing them under the same field names would invite a
-comparison that does not hold. The scanner keeps the job only it can do —
-seed sites, `transmute` shapes, mixed-reference structs — and the counts come
-from here.
+Resolution-aware because the questions are: which C type a pointer points at,
+whether a reference covers memory C writes, what survived `cfg` and macro
+expansion. None of that is answerable from source text.
 
 WHAT IT COSTS. A rustc driver has to compile the crate, and an FFI wrapper
 often needs system libraries that are not installed. When the build fails there
 are NO counts rather than substitute ones: ``compose`` reports ``counts: null``
-and the seed half still runs. A number absent is recoverable; a number that
-looks like crustify-cli's but was produced differently is not.
+and says why. A number absent is recoverable; a number that looks like
+crustify-cli's but was produced differently is not.
 """
 from __future__ import annotations
 
@@ -27,7 +24,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-_DRIVER_CRATE = Path(__file__).resolve().parents[2] / "driver"
+_DRIVER_CRATE = Path(__file__).resolve().parents[1] / "driver"
 
 # Count fields summed across the per-crate emissions, and site arrays
 # concatenated. The set the driver emits; kept explicit so a field added there

@@ -9,7 +9,7 @@ TWO VERBS, AND THE SPLIT IS THE POINT.
 no network, no build. Two runs over one tree agree exactly, so a diff between
 them is a change in the crate.
 
-`ub` is agentic: one agent, seeded by `unsafe`, hunting undefined behaviour
+`ub` is agentic: one agent reading the crate, hunting undefined behaviour
 reachable from safe code and authoring the advisory itself.
 
 Separate verbs rather than one command with a flag, because a caller must always
@@ -48,12 +48,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     m = sub.add_parser(
         "unsafe",
-        help="DETERMINISTIC unsafe-surface scan. No LLM.",
-        description="Parse every .rs file and emit counts plus a ranked list of "
-                    "sites worth a closer look. Reproducible: same tree, same "
-                    "bytes. The ranking is ORDERING ONLY — the scanner cannot "
-                    "tell a sound transmute from an unsound one, and a low score "
-                    "is not a clearance.")
+        help="DETERMINISTIC unsafe metrics. No LLM.",
+        description="Measure the crate's unsafe surface with a rustc driver "
+                    "over HIR and typeck — the same driver `crustify-cli audit` "
+                    "runs, so the numbers compare across both tools. "
+                    "Reproducible: same tree, same bytes. Needs the crate to "
+                    "compile; when it does not, there are no counts rather than "
+                    "approximate ones. It says HOW MUCH unsafety is there, never "
+                    "which of it is wrong.")
     m.add_argument("--json", action="store_true",
                    help="Print the document instead of a summary.")
 
@@ -61,10 +63,10 @@ def build_parser() -> argparse.ArgumentParser:
         "ub",
         help="AGENTIC hunt for undefined behaviour. Costs money.",
         description="Drive ONE agent hunting UB reachable from safe code. It "
-                    "runs the `unsafe` static pass itself, as often and as "
-                    "narrowly as it wants — no prior run is required. The agent builds its own "
+                    "reads the crate itself to find what is worth looking at, "
+                    "and can run `unsafe` for the numbers. The agent builds its own "
                     "reproductions, checks them under miri, and writes the "
-                    "advisory itself — the harness supplies a seed and a "
+                    "advisory itself — the harness supplies a workspace and a "
                     "scratch directory and nothing else. It never writes to the "
                     "audited workspace outside its `crustify/audit/` directory. It "
                     "writes one note per lead investigated into crustify/audit/notes/ "
@@ -109,8 +111,8 @@ def _cmd_unsafe(layout: Layout, args) -> int:
     else:
         print(f"[crustify-audit] unsafe -> {path}\n")
         print(M.summarize(doc))
-        print("\n  Ranking is ordering only. A low score is not a clearance.")
-        print(f"  Next: crustify-audit {layout.workspace} ub")
+        print(f"\n  Counts, not judgement. Next: crustify-audit "
+              f"{layout.workspace} ub")
     return 0
 
 
