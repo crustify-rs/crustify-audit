@@ -30,6 +30,31 @@ campaign, no CodeQL database — that is what makes this a separate binary from
 `crustify-cli` rather than another subcommand, since both crustify binaries
 mandate `<repo_root> <target>` and refuse to run without campaign artifacts.
 
+## Usage
+
+Python >= 3.13. `pip install -e .` puts `crustify-audit` on PATH; without an
+install, `PYTHONPATH=src python3 -m crustify_audit.cli` takes the same
+arguments.
+
+```sh
+crustify-audit <workspace> [--out DIR] unsafe [--json]
+crustify-audit <workspace> [--out DIR] ub     [--model PROVIDER/MODEL] [--focus TEXT] [--timeout MIN]
+```
+
+| flag | verb | default | effect |
+|---|---|---|---|
+| `<workspace>` | both | — | cargo workspace to audit; an ordinary crate |
+| `--out DIR` | both | `<workspace>/crustify/` | where artifacts go; point elsewhere to leave the tree untouched. Precedes the verb |
+| `--json` | `unsafe` | off | print the document instead of the summary |
+| `--model PROVIDER/MODEL` | `ub` | backend default | e.g. `anthropic/claude-opus-5`, `openai/gpt-5.6`; the prefix selects the backend and is mandatory |
+| `--focus TEXT` | `ub` | whole crate | narrow the hunt, e.g. `'the format module'` |
+| `--timeout MIN` | `ub` | `30` | wall-clock ceiling for one agent; `0` disables. Set it to the whole budget for one sitting — successive runs accumulate rather than split a budget |
+
+`unsafe` needs a nightly toolchain with `rustc-dev` and `llvm-tools` for the
+counts, and the crate to compile. Neither is needed for the seed sites.
+`ub` needs `cargo +nightly miri` to check its own reproductions, and warns
+without it.
+
 ## Why the deterministic half exists
 
 The agent could grep. It should not:

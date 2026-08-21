@@ -1,7 +1,7 @@
 """cli.py — `crustify-audit`.
 
-    crustify-audit <workspace> unsafe [--json] [--out DIR]
-    crustify-audit <workspace> ub     [--model M] [--focus F]
+    crustify-audit <workspace> [--out DIR] unsafe [--json]
+    crustify-audit <workspace> [--out DIR] ub     [--model M] [--focus F] [--timeout MIN]
 
 TWO VERBS, AND THE SPLIT IS THE POINT.
 
