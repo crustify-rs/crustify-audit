@@ -66,10 +66,10 @@ def build_parser() -> argparse.ArgumentParser:
                     "reproductions, checks them under miri, and writes the "
                     "advisory itself — the harness supplies a seed and a "
                     "scratch directory and nothing else. It never writes to the "
-                    "audited workspace outside its `crustify/` directory. It "
-                    "writes one note per lead investigated into crustify/notes/ "
+                    "audited workspace outside its `crustify/audit/` directory. It "
+                    "writes one note per lead investigated into crustify/audit/notes/ "
                     "and one advisory per CONFIRMED bug into "
-                    "crustify/advisories/ — an advisory means something actually "
+                    "crustify/audit/advisories/ — an advisory means something actually "
                     "crashed. Runs ACCUMULATE: there is no skip, and the agent "
                     "reads what earlier runs left before starting, so a second "
                     "run extends the record instead of re-deriving it.")

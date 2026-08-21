@@ -59,8 +59,8 @@ class AuditAgent:
     directory. It leaves one lead note per candidate it investigated and one
     advisory per bug it actually crashed. It never edits the audited crate.
 
-    Runs ACCUMULATE. The agent reads what earlier runs left in ``crustify/advisories/``
-    and ``crustify/notes/`` before starting, so a second run extends the record instead
+    Runs ACCUMULATE. The agent reads what earlier runs left in ``crustify/audit/advisories/``
+    and ``crustify/audit/notes/`` before starting, so a second run extends the record instead
     of re-deriving it.
     """
 
@@ -91,7 +91,7 @@ class AuditAgent:
         """Drive the hunt until the deadline. Returns (advisories, leads).
 
         THERE IS NO DONE SIGNAL AND NO SKIP, deliberately. Runs accumulate:
-        each reads what earlier ones left in `crustify/advisories/` and `crustify/notes/` and adds
+        each reads what earlier ones left in `crustify/audit/advisories/` and `crustify/audit/notes/` and adds
         to them. Skipping when an artifact exists would make the second run --
         the one that builds on the first -- impossible. The cost is that `ub`
         always spends, so the CLI reports what is already there before starting.
@@ -207,7 +207,7 @@ class AuditAgent:
             "A finding you cannot demonstrate is a hypothesis. Say which you "
             "are reporting.\n\n"
             "HARD RULE. Inside the audited workspace you may write ONLY under "
-            "its `crustify/` directory -- your notes and advisories belong "
+            "its `crustify/audit/` directory -- your notes and advisories belong "
             "there and nowhere else. Its source, tests and build files are "
             "read-only to you. Your scratch directory is yours entirely."
         )

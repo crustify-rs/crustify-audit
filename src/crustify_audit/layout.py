@@ -19,7 +19,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-ARTIFACT_DIR = "crustify"
+#: Under `crustify/`, not beside it: auditing a campaign target should put the
+#: audit next to the campaign. In its OWN subdirectory, because a target that
+#: has been through crustify-cli already has `codeql/`, `rust/`, `crates.json`
+#: and the rest at that level, and interleaving two tools' artifacts in one
+#: listing makes neither readable — and leaves the next name either side adds
+#: free to collide.
+ARTIFACT_DIR = "crustify/audit"
 
 
 class Layout:

@@ -17,9 +17,10 @@ crustify-audit /path/to/crate unsafe      # deterministic, standalone
 crustify-audit /path/to/crate ub          # agentic; runs the pass itself
 ```
 
-Artifacts land in `<crate>/crustify/` — `advisories/`, `notes/`, `scratch/`,
-`logs/`, `unsafe.json`. Same directory name crustify-cli uses, so auditing a
-campaign target puts the audit beside the campaign.
+Artifacts land in `<crate>/crustify/audit/` — `advisories/`, `notes/`,
+`scratch/`, `logs/`, `unsafe.json`. Under the directory crustify-cli uses, so
+auditing a campaign target puts the audit beside the campaign, in its own
+subdirectory so the two tools' artifacts stay separable.
 
 The agent authors the advisory itself, in prose, because the judgement it is
 there to exercise is the part a filled-in template would flatten.
@@ -89,9 +90,9 @@ check misses it entirely.
 
 ## Triage
 
-**An empty `crustify/advisories/` means nothing was demonstrated.** The agent
+**An empty `crustify/audit/advisories/` means nothing was demonstrated.** The agent
 writes an advisory only when it actually crashed something — one file per bug,
-named after the bug. `crustify/notes/` holds one note per lead it chased,
+named after the bug. `crustify/audit/notes/` holds one note per lead it chased,
 whether or not that lead panned out, so a clean audit is distinguishable from an
 agent that died halfway.
 
