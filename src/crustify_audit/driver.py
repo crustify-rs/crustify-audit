@@ -51,18 +51,30 @@ class DriverUnavailable(Exception):
 
 
 def _driver_bin() -> Path:
-    """Build the driver on first use and return its path.
+    """Build the driver if it is not current, and return its path.
 
     Needs nightly with ``rustc-dev`` and ``llvm-tools`` — pinned by the crate's
     own ``rust-toolchain.toml``.
+
+    ALWAYS asks cargo, rather than reusing whatever binary is on disk. A
+    `rustc_private` driver links against the exact compiler it was built with,
+    and nightly moves daily — so a binary built last week against a different
+    nightly loads, runs, and dies on an undefined symbol. Cargo's fingerprint
+    already tracks the compiler version, so this is a no-op when nothing
+    changed and a rebuild exactly when one is needed.
+
+    Reusing a stale binary is worse than failing: the symbol error surfaces as
+    a non-zero `cargo build` in :func:`measure`, which reports it as "the
+    workspace does not compile" — a true statement about the wrong program.
     """
     bin_path = _DRIVER_CRATE / "target" / "debug" / "crustify-audit-driver"
-    if bin_path.is_file():
-        return bin_path
     if shutil.which("cargo") is None:
+        if bin_path.is_file():
+            return bin_path
         raise DriverUnavailable(
             "the driver is not built and `cargo` is not on PATH")
-    print("[crustify-audit] building the HIR driver (first run only)…")
+    if not bin_path.is_file():
+        print("[crustify-audit] building the HIR driver (first run only)…")
     r = subprocess.run(["cargo", "+nightly", "build"], cwd=_DRIVER_CRATE,
                        capture_output=True, text=True)
     if r.returncode != 0:
