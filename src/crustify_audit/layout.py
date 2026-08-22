@@ -3,12 +3,11 @@
 ONE deliberate difference from crustify-cli, and it is the whole reason this is
 a separate binary: the subject is an ORDINARY CARGO WORKSPACE. There is no
 ``crustify/`` directory to find, no ``scope-config.json`` to read, no CodeQL
-database, no campaign. Both crustify binaries mandate ``<repo_root> <target>``
-and bail with "no crustify/ under repo_root"; the audit that motivated this
-tool was of a third-party crate with none of that, and could not have been run
-through either.
+database, no campaign. The campaign binaries mandate ``<repo_root> <target>``;
+the audit that motivated this tool was of a third-party crate with none of
+that, and could not have been run through either.
 
-Artifacts land in ``<workspace>/crustify/`` -- the same directory name
+Artifacts land in ``<repo>/crustify/audit/`` -- under the same directory
 crustify-cli uses at a repo root, so auditing a crate that IS a crustify
 campaign target puts the audit beside the campaign rather than in a second
 place. Inside the audited tree on purpose: notes and advisories are about that

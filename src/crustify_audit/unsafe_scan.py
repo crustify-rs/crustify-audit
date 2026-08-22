@@ -20,8 +20,26 @@ from pathlib import Path
 from crustify_audit import driver
 from crustify_audit.layout import CAMPAIGN_WORKSPACE, Layout
 
+_SCAN_IGNORE = "/unsafe.json"
 
-def compose(layout: Layout) -> dict:
+
+def _ensure_scan_ignored(layout: Layout) -> None:
+    """Keep the reproducible scan out of commits without hiding advisories."""
+    campaign_ignore = layout.repo / "crustify" / ".gitignore"
+    if campaign_ignore.is_file():
+        if "audit/unsafe.json" in campaign_ignore.read_text().splitlines():
+            return
+    ignore = layout.root / ".gitignore"
+    existing = ignore.read_text() if ignore.is_file() else ""
+    if _SCAN_IGNORE in existing.splitlines():
+        return
+    prefix = existing
+    if prefix and not prefix.endswith("\n"):
+        prefix += "\n"
+    ignore.write_text(prefix + _SCAN_IGNORE + "\n")
+
+
+def compose(layout: Layout, names: list[str] | None = None) -> dict:
     """Scan the workspace and return the metrics document."""
     if not layout.is_cargo_workspace():
         raise SystemExit(
@@ -30,13 +48,21 @@ def compose(layout: Layout) -> dict:
             f"repository holding one.")
     doc: dict = {"crate_path": str(layout.workspace)}
     try:
-        doc["counts"] = driver.measure(layout.workspace)
+        doc["counts"], entries = driver.measure(layout.workspace, names=names)
         doc["counts_unavailable"] = None
     except driver.DriverUnavailable as e:
         # No counts rather than substitute ones: see driver.py.
         doc["counts"] = None
         doc["counts_unavailable"] = str(e)
         print(f"[crustify-audit] no counts: {e}".rstrip())
+        entries = []
+    if names:
+        if not entries and doc["counts"] is not None:
+            raise SystemExit(
+                "unsafe: no sites matched --name "
+                + " ".join(names))
+        doc["seed"] = "--name " + " ".join(names)
+        doc["entries"] = entries
     doc["derived"] = _derive(doc)
     return doc
 
@@ -73,9 +99,10 @@ def _derive(doc: dict) -> dict:
     }
 
 
-def write(layout: Layout) -> Path:
+def write(layout: Layout, names: list[str] | None = None) -> Path:
     layout.root.mkdir(parents=True, exist_ok=True)
-    doc = compose(layout)
+    _ensure_scan_ignored(layout)
+    doc = compose(layout, names=names)
     layout.scan.write_text(json.dumps(doc, indent=2) + "\n")
     return layout.scan
 
@@ -100,4 +127,22 @@ def summarize(doc: dict) -> str:
     else:
         lines.append(f"  counts               unavailable — "
                      f"{doc.get('counts_unavailable')}")
+    entries = doc.get("entries") or []
+    if entries:
+        lines.append("\n  named seeds")
+        for e in entries:
+            ptrs = sum(s.get("count", 0) for s in e.get("raw_ptr_sites", []))
+            derefs = sum(s.get("count", 0) for s in e.get("raw_deref_sites", []))
+            deref_impls = sum(s.get("count", 0) for s in e.get("deref_impl_sites", []))
+            deref_mut_impls = sum(
+                s.get("count", 0) for s in e.get("deref_mut_impl_sites", []))
+            shared_slices = sum(
+                s.get("count", 0) for s in e.get("slice_ref_sites", []))
+            mutable_slices = sum(
+                s.get("count", 0) for s in e.get("slice_mut_sites", []))
+            lines.append(
+                f"    {e.get('crate')}::{e.get('name')}"
+                f"  raw-pointer sites {ptrs}, dereference sites {derefs},"
+                f" Deref/DerefMut impl sites {deref_impls}/{deref_mut_impls},"
+                f" shared/mutable slice sites {shared_slices}/{mutable_slices}")
     return "\n".join(lines)

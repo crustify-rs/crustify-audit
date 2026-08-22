@@ -1,10 +1,7 @@
 """driver.py — the deterministic pass.
 
-Runs the vendored rustc driver (``src/driver/``) over the subject workspace and
-returns its tree-wide metrics block. This is the SAME driver ``crustify-cli
-audit`` runs, so the numbers under ``counts`` are its numbers, not an
-approximation of them, and a wrapper audited by either tool compares with one
-audited by the other.
+Runs the canonical rustc driver (``src/driver/``) over the subject workspace
+and returns its tree-wide metrics block.
 
 Resolution-aware because the questions are: which C type a pointer points at,
 whether a reference covers memory C writes, what survived `cfg` and macro
@@ -48,6 +45,39 @@ _SITES = ("raw_ptr_sites", "void_ptr_sites", "field_proj_sites",
 
 class DriverUnavailable(Exception):
     """The driver could not measure this tree. Carries the reason to report."""
+
+
+def _collect_emissions(stdout: str) -> tuple[dict, list[dict], int]:
+    """Merge driver JSON lines; return counts, seed entries, crate count."""
+    out = {k: 0 for k in _COUNTS}
+    sites = {k: [] for k in _SITES}
+    entries: list[dict] = []
+    seen = 0
+    for line in stdout.splitlines():
+        line = line.strip()
+        if not (line.startswith("{") and '"crate"' in line):
+            continue
+        try:
+            d = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        crate = d.get("crate", "")
+        if crate.endswith("_sys"):
+            continue
+        if "seeds" in d:
+            for seed in d["seeds"]:
+                seed["crate"] = crate
+                entries.append(seed)
+            continue
+        if "unsafe_blocks" not in d:
+            continue
+        seen += 1
+        for k in _COUNTS:
+            out[k] += int(d.get(k, 0))
+        for k in _SITES:
+            sites[k].extend(d.get(k, []))
+    out.update(sites)
+    return out, entries, seen
 
 
 def _driver_bin() -> Path:
@@ -107,8 +137,12 @@ def _bust_cache(ws: Path) -> None:
                 root.touch()
 
 
-def measure(ws: Path) -> dict:
-    """Return the tree-wide metrics for `ws`, or raise `DriverUnavailable`."""
+def measure(ws: Path, names: list[str] | None = None) -> tuple[dict, list[dict]]:
+    """Return ``(tree-wide counts, named seed entries)`` for ``ws``.
+
+    Type and symbol names resolve independently inside each compiled workspace
+    crate. Entries therefore retain their crate name.
+    """
     driver = _driver_bin()
     sysroot = subprocess.run(["rustc", "+nightly", "--print", "sysroot"],
                              capture_output=True, text=True).stdout.strip()
@@ -121,6 +155,9 @@ def measure(ws: Path) -> dict:
     env["SYSROOT"] = sysroot
     ld = env.get("LD_LIBRARY_PATH", "")
     env["LD_LIBRARY_PATH"] = f"{sysroot}/lib" + (f":{ld}" if ld else "")
+    if names:
+        env["UM_MODE"] = "seed"
+        env["UM_SEED_NAME"] = " ".join(names)
 
     r = subprocess.run(["cargo", "+nightly", "build"], cwd=ws, env=env,
                        capture_output=True, text=True)
@@ -130,29 +167,10 @@ def measure(ws: Path) -> dict:
             "wrapper usually needs its system libraries installed.\n"
             f"{r.stderr[-1200:]}")
 
-    out = {k: 0 for k in _COUNTS}
-    sites = {k: [] for k in _SITES}
-    seen = 0
-    for line in r.stdout.splitlines():
-        line = line.strip()
-        if not (line.startswith("{") and '"crate"' in line):
-            continue
-        try:
-            d = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        # `-sys` crates are generated bindings, never the audit subject. Same
-        # filter `crustify-cli audit` applies, so the totals match.
-        if d.get("crate", "").endswith("_sys") or "unsafe_blocks" not in d:
-            continue
-        seen += 1
-        for k in _COUNTS:
-            out[k] += int(d.get(k, 0))
-        for k in _SITES:
-            sites[k].extend(d.get(k, []))
+    # `-sys` crates are generated bindings, never the audit subject.
+    out, entries, seen = _collect_emissions(r.stdout)
     if not seen:
         raise DriverUnavailable(
             "no crate emitted metrics — the build was served from cache, so "
             "nothing was measured")
-    out.update(sites)
-    return out
+    return out, entries

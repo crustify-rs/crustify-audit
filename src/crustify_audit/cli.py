@@ -1,13 +1,13 @@
 """cli.py — `crustify-audit`.
 
-    crustify-audit <workspace> unsafe [--json]
+    crustify-audit <workspace> unsafe [--json] [--name NAME ...]
     crustify-audit <workspace> ub     [--model M] [--billing B] [--timeout MIN]
 
 TWO VERBS, AND THE SPLIT IS THE POINT.
 
-`unsafe` is deterministic: a `syn` pass over the crate's unsafe surface. No LLM,
-no network, no build. Two runs over one tree agree exactly, so a diff between
-them is a change in the crate.
+`unsafe` is deterministic: a rustc HIR/typeck pass over the crate's unsafe
+surface. No LLM or network. Two runs over one tree agree exactly, so a diff
+between them is a change in the crate.
 
 `ub` is agentic: one agent reading the crate, hunting undefined behaviour
 reachable from safe code and authoring the advisory itself.
@@ -52,14 +52,19 @@ def build_parser() -> argparse.ArgumentParser:
         "unsafe",
         help="DETERMINISTIC unsafe metrics. No LLM.",
         description="Measure the crate's unsafe surface with a rustc driver "
-                    "over HIR and typeck — the same driver `crustify-cli audit` "
-                    "runs, so the numbers compare across both tools. "
+                    "over HIR and typeck. This is the canonical deterministic "
+                    "Crustify safety pass. "
                     "Reproducible: same tree, same bytes. Needs the crate to "
                     "compile; when it does not, there are no counts rather than "
                     "approximate ones. It says HOW MUCH unsafety is there, never "
                     "which of it is wrong.")
     m.add_argument("--json", action="store_true",
                    help="Print the document instead of a summary.")
+    m.add_argument(
+        "--name", nargs="+", action="extend", default=None, metavar="NAME",
+        help="Report raw-pointer, dereference, manual Deref/DerefMut, and "
+             "wrapper-slice sites for these C type or symbol names in each "
+             "workspace crate. Raw-pointer matching does not require a wrapper.")
 
     h = sub.add_parser(
         "ub",
@@ -106,7 +111,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _cmd_unsafe(layout: Layout, args) -> int:
     from crustify_audit import unsafe_scan as M
-    path = M.write(layout)
+    path = M.write(layout, names=args.name)
     doc = json.loads(path.read_text())
     if args.json:
         print(json.dumps(doc, indent=2))

@@ -1,9 +1,6 @@
-//! VENDORED from crustify-cli `utils/unsafe_metrics`, main @ 4757b9a.
+//! Canonical rustc driver for `crustify-audit unsafe`.
 //!
-//! Byte-identical by intent: `crustify-audit unsafe` reports the same numbers
-//! as `crustify-cli audit` because it runs the same driver. Change it there
-//! and copy it here; a local edit makes the two tools disagree while both
-//! claim the same metric names.
+//! Changes to the deterministic safety pass belong here.
 //!
 //! PoC: a rustc driver (HIR + typeck) that counts three properties of a Rust
 //! crate that the regex/`syn` approaches cannot do precisely:
@@ -33,7 +30,8 @@ use rustc_abi::ExternAbi;
 use rustc_driver::{Callbacks, Compilation};
 use rustc_hir as hir;
 use rustc_hir::def::DefKind;
-use rustc_hir::intravisit::{self, Visitor};
+use rustc_hir::intravisit::{self, Visitor, VisitorExt};
+use rustc_middle::hir::nested_filter;
 use rustc_middle::middle::codegen_fn_attrs::CodegenFnAttrFlags;
 use rustc_middle::ty::{self, Ty, TyCtxt, TypeckResults};
 use rustc_span::def_id::DefId;
@@ -47,20 +45,30 @@ use std::collections::{HashMap, HashSet};
 /// add for callback wrappers.
 const SEAM_FNS: &[&str] = &[
     // ffibox
-    "as_ptr", "as_mut_ptr",
+    "as_ptr",
+    "as_mut_ptr",
     // the erasure trio: erase shared / erase exclusive / reconstitute
-    "as_void_ptr", "as_mut_void_ptr", "from_void_ptr",
-    "from_ptr", "from_raw", "from_raw_parts", "from_raw_uninit",
+    "as_void_ptr",
+    "as_mut_void_ptr",
+    "from_void_ptr",
+    "from_ptr",
+    "from_raw",
+    "from_raw_parts",
+    "from_raw_uninit",
     // `CCell`'s adopt-a-raw-pointer pair: the same family as `from_raw`, named
     // for the handle each yields (`c_type.rs`).
-    "ref_from_raw", "mut_from_raw",
-    "into_raw", "into_raw_parts", "into_raw_uninit",
+    "ref_from_raw",
+    "mut_from_raw",
+    "into_raw",
+    "into_raw_parts",
+    "into_raw_uninit",
     // ported trees: safe callback wrapper -> raw C fn pointer
     "to_raw",
 ];
 
 fn is_seam_fn(tcx: TyCtxt<'_>, did: DefId) -> bool {
-    tcx.opt_item_name(did).is_some_and(|n| SEAM_FNS.contains(&n.as_str()))
+    tcx.opt_item_name(did)
+        .is_some_and(|n| SEAM_FNS.contains(&n.as_str()))
 }
 
 /// True if `t` is `PhantomData<..>` -- a ZST, so it is not the wrapper's
@@ -77,7 +85,8 @@ fn is_ptr_storage(tcx: TyCtxt<'_>, t: Ty<'_>) -> bool {
         ty::TyKind::RawPtr(..) => true,
         ty::TyKind::Adt(d, _) => matches!(
             tcx.item_name(d.did()).as_str(),
-            "CPtr" | "NonNull" | "CBox" | "CBoxUninit" | "CVoidBox"),
+            "CPtr" | "NonNull" | "CBox" | "CBoxUninit" | "CVoidBox"
+        ),
         _ => false,
     }
 }
@@ -153,9 +162,7 @@ fn raw_pointee<'tcx>(t: Ty<'tcx>) -> Option<Ty<'tcx>> {
 /// (i.e. a safe wrapper exists for it) — or is itself such a wrapper.
 fn pointee_has_wrapper(tcx: TyCtxt<'_>, p: Ty<'_>, wrapped_c: &HashSet<DefId>) -> bool {
     match p.kind() {
-        ty::TyKind::Adt(def, _) => {
-            wrapped_c.contains(&def.did()) || is_wrapper(tcx, def.did())
-        }
+        ty::TyKind::Adt(def, _) => wrapped_c.contains(&def.did()) || is_wrapper(tcx, def.did()),
         _ => false,
     }
 }
@@ -209,7 +216,9 @@ fn scan_wrappers(tcx: TyCtxt<'_>) -> HashMap<DefId, DefId> {
         if !matches!(trait_name.as_str(), "CCell" | "CLayout") {
             continue;
         }
-        let ty::TyKind::Adt(sdef, _) = tr.self_ty().kind() else { continue };
+        let ty::TyKind::Adt(sdef, _) = tr.self_ty().kind() else {
+            continue;
+        };
         for it in tcx.associated_items(did).in_definition_order() {
             if !matches!(tcx.def_kind(it.def_id), DefKind::AssocTy) {
                 continue;
@@ -274,14 +283,17 @@ fn is_declared_wrapper(tcx: TyCtxt<'_>, did: DefId) -> bool {
 /// never silently admitted.
 fn peel_transparent<'tcx>(tcx: TyCtxt<'tcx>, t: Ty<'tcx>) -> Ty<'tcx> {
     let mut cur = t;
-    for _ in 0..8 {                       // depth guard; nesting is 2-3 in practice
+    for _ in 0..8 {
+        // depth guard; nesting is 2-3 in practice
         // `NonNull<T>` lowers to a PATTERN type (`*const T is !null`), so a
         // handle peeled to the bottom lands here rather than on `RawPtr`.
         if let ty::TyKind::Pat(base, _) = cur.kind() {
             cur = *base;
             continue;
         }
-        let ty::TyKind::Adt(def, args) = cur.kind() else { return cur };
+        let ty::TyKind::Adt(def, args) = cur.kind() else {
+            return cur;
+        };
         if !def.repr().transparent() || !def.is_struct() {
             return cur;
         }
@@ -339,8 +351,13 @@ fn field_adt<'tcx>(tcx: TyCtxt<'tcx>, t: Ty<'tcx>) -> Option<ty::AdtDef<'tcx>> {
 /// A same-crate `#[repr(C)]` field is RECURSED into rather than accepted, so a
 /// wrapper that reaches C through its own intermediate struct still resolves.
 /// Depth- and cycle-guarded.
-fn embedded_c(tcx: TyCtxt<'_>, did: DefId, depth: u32,
-              seen: &mut HashSet<DefId>, out: &mut Vec<DefId>) {
+fn embedded_c(
+    tcx: TyCtxt<'_>,
+    did: DefId,
+    depth: u32,
+    seen: &mut HashSet<DefId>,
+    out: &mut Vec<DefId>,
+) {
     if depth > 8 {
         return;
     }
@@ -349,7 +366,9 @@ fn embedded_c(tcx: TyCtxt<'_>, did: DefId, depth: u32,
         if is_phantom(tcx, ft) || is_zst_marker(tcx, ft) {
             continue;
         }
-        let Some(d) = field_adt(tcx, ft) else { continue };
+        let Some(d) = field_adt(tcx, ft) else {
+            continue;
+        };
         if !d.repr().c() {
             continue;
         }
@@ -387,8 +406,7 @@ fn structural_wrapper(tcx: TyCtxt<'_>, did: DefId) -> Option<(bool, Vec<DefId>)>
     };
     // HANDLE first: a transparent newtype whose storage IS a pointer.
     if def.repr().transparent() {
-        let inner =
-            peel_transparent(tcx, tcx.type_of(did).instantiate_identity().skip_norm_wip());
+        let inner = peel_transparent(tcx, tcx.type_of(did).instantiate_identity().skip_norm_wip());
         match inner.kind() {
             ty::TyKind::RawPtr(p, _) | ty::TyKind::Ref(_, p, _) => {
                 return Some((false, adt_did(*p).into_iter().collect()));
@@ -419,11 +437,6 @@ fn structural_wrapper(tcx: TyCtxt<'_>, did: DefId) -> Option<(bool, Vec<DefId>)>
 /// Is `did` a wrapper type?
 fn is_wrapper(tcx: TyCtxt<'_>, did: DefId) -> bool {
     with_wrappers(tcx, |w| w.contains_key(&did))
-}
-
-/// The C types `did` wraps, from the structural peel.
-fn wrapper_c_tys(tcx: TyCtxt<'_>, did: DefId) -> Vec<DefId> {
-    with_wrappers(tcx, |w| w.get(&did).cloned().unwrap_or_default())
 }
 
 /// The `DefId` of an impl's self-type (`impl T` / `impl Tr for T` -> `T`), via
@@ -466,9 +479,7 @@ fn in_ffi_export(tcx: TyCtxt<'_>, mut did: DefId) -> bool {
     loop {
         if matches!(tcx.def_kind(did), DefKind::Fn | DefKind::AssocFn) {
             let attrs = tcx.codegen_fn_attrs(did);
-            if attrs.flags.contains(CodegenFnAttrFlags::NO_MANGLE)
-                || attrs.symbol_name.is_some()
-            {
+            if attrs.flags.contains(CodegenFnAttrFlags::NO_MANGLE) || attrs.symbol_name.is_some() {
                 return true;
             }
             if tcx.fn_sig(did).skip_binder().skip_binder().abi() != ExternAbi::Rust {
@@ -478,9 +489,7 @@ fn in_ffi_export(tcx: TyCtxt<'_>, mut did: DefId) -> bool {
         match tcx.opt_parent(did) {
             // Keep walking out of closures / nested bodies into the owning fn;
             // stop at the module boundary.
-            Some(p) if !matches!(tcx.def_kind(p), DefKind::Mod | DefKind::ForeignMod) => {
-                did = p
-            }
+            Some(p) if !matches!(tcx.def_kind(p), DefKind::Mod | DefKind::ForeignMod) => did = p,
             _ => return false,
         }
     }
@@ -505,8 +514,7 @@ fn in_wrapper_impl(tcx: TyCtxt<'_>, mut did: DefId) -> bool {
     while let Some(parent) = tcx.opt_parent(did) {
         match tcx.def_kind(parent) {
             DefKind::Impl { .. } => {
-                return impl_self_def(tcx, parent)
-                    .is_some_and(|s| is_wrapper(tcx, s));
+                return impl_self_def(tcx, parent).is_some_and(|s| is_wrapper(tcx, s));
             }
             DefKind::Mod | DefKind::ForeignMod => return false,
             _ => did = parent,
@@ -519,7 +527,7 @@ fn in_wrapper_impl(tcx: TyCtxt<'_>, mut did: DefId) -> bool {
 struct Counts {
     unsafe_blocks: u64,
     unsafe_block_stmts: u64,
-    unsafe_block_lines: u64,      // raw brace-to-brace span (incl. blanks/comments)
+    unsafe_block_lines: u64, // raw brace-to-brace span (incl. blanks/comments)
     unsafe_block_code_lines: u64, // non-blank, non-`//`-comment lines only
     unsafe_blocks_wrapper_impl: u64, // unsafe blocks inside `impl <wrapper T>`
     unsafe_blocks_ffi_export: u64,
@@ -550,9 +558,9 @@ struct Counts {
     wrapper_newtypes: u64,
     wrapper_newtypes_declared: u64,
     wrapper_declared_nonconformant: u64,
-    wrapper_newtypes_undeclared: u64,   // unsafe blocks at the C-ABI boundary
-                                     //   (`in_ffi_export`: `#[no_mangle]` /
-                                     //   `#[export_name]` / `extern "C"`)
+    wrapper_newtypes_undeclared: u64, // unsafe blocks at the C-ABI boundary
+    //   (`in_ffi_export`: `#[no_mangle]` /
+    //   `#[export_name]` / `extern "C"`)
     // Signature raw pointers. ONE family, with the sanctioned subset named
     // rather than excluded: `raw_ptr_args` + `raw_ptr_rets` is every raw-pointer position
     // in a signature (the denominator), `raw_ptr_seam` the subset that is legitimate
@@ -561,11 +569,11 @@ struct Counts {
     // region in NEITHER, so it reported a numerator with no denominator.
     raw_ptr_args: u64,
     raw_ptr_rets: u64,
-    raw_ptr_seam: u64,      // seam fn / C-ABI boundary / ptr-to-own-Self
-    raw_ptr_wrapped: u64,   // of the NON-seam remainder, pointee is a wrapped C type
+    raw_ptr_seam: u64,       // seam fn / C-ABI boundary / ptr-to-own-Self
+    raw_ptr_wrapped: u64,    // of the NON-seam remainder, pointee is a wrapped C type
     raw_ptr_in_wrapper: u64, // of the NON-seam remainder, inside `impl <wrapper T>`
-                        //   — kept because a raw ptr in the very type meant to
-                        //   hide it is worse than one in a ported free fn
+    //   — kept because a raw ptr in the very type meant to
+    //   hide it is worse than one in a ported free fn
     ref_to_type_wrapper: u64, // `&W` / `&mut W` (incl. the receiver), W a TYPE wrapper
     // `(*p).field` where `p: *C` and `C` has a wrapper (bypasses the
     // accessor): total, and the subset outside any impl/trait (the smell).
@@ -584,16 +592,14 @@ struct Counts {
 }
 
 /// Per-category source sites `(file, 1-based line)` — the actionable locations
-/// the `crustify audit` consumer (wrap/port agents) act on. Mirrors audit.py's
-/// `naked_sites` / `*_smell_sites` shape after `sites_json` aggregation.
+/// the audit consumer acts on, aggregated by `sites_json`.
 #[derive(Default)]
 struct Sites {
-    naked: Vec<(String, usize)>,       // tree-wide naked `ffi::C` / `*-sys` use
-    raw_ptr: Vec<(String, usize)>,     // raw ptr to a wrapped C type in a signature
-    void_ptr: Vec<(String, usize)>,    // `*c_void` smell
-    field_proj: Vec<(String, usize)>,  // `(*p).field` bypassing the accessor
-    field_ref: Vec<(String, usize)>,   // `&(*p).field` -- a reference INTO the C object
-    raw_deref: Vec<(String, usize)>,   // `*p` (raw ptr) outside any impl/trait body
+    raw_ptr: Vec<(String, usize)>, // raw ptr to a wrapped C type in a signature
+    void_ptr: Vec<(String, usize)>, // `*c_void` smell
+    field_proj: Vec<(String, usize)>, // `(*p).field` bypassing the accessor
+    field_ref: Vec<(String, usize)>, // `&(*p).field` -- a reference INTO the C object
+    raw_deref: Vec<(String, usize)>, // `*p` (raw ptr) outside any impl/trait body
 }
 
 /// `(file, 1-based line)` for a span, local-path filename.
@@ -694,13 +700,13 @@ impl<'a, 'tcx> Visitor<'tcx> for BodyVisitor<'a, 'tcx> {
                     // filtered: drop blank + `//`-comment lines (same filter as
                     // the code_LOC denominator, so the ratio is apples-to-apples)
                     if let Ok(snip) = sm.span_to_snippet(b.span) {
-                        self.c.unsafe_block_code_lines += snip
-                            .lines()
-                            .filter(|l| {
-                                let t = l.trim();
-                                !t.is_empty() && !t.starts_with("//")
-                            })
-                            .count() as u64;
+                        self.c.unsafe_block_code_lines +=
+                            snip.lines()
+                                .filter(|l| {
+                                    let t = l.trim();
+                                    !t.is_empty() && !t.starts_with("//")
+                                })
+                                .count() as u64;
                     }
                 }
                 self.depth += 1;
@@ -744,9 +750,7 @@ impl<'a, 'tcx> Visitor<'tcx> for BodyVisitor<'a, 'tcx> {
             hir::ExprKind::AddrOf(hir::BorrowKind::Ref, _, operand) => {
                 if let hir::ExprKind::Field(base, _) = operand.kind {
                     if let hir::ExprKind::Unary(hir::UnOp::Deref, inner) = base.kind {
-                        if let ty::TyKind::RawPtr(pointee, _) =
-                            self.typeck.expr_ty(inner).kind()
-                        {
+                        if let ty::TyKind::RawPtr(pointee, _) = self.typeck.expr_ty(inner).kind() {
                             if pointee_has_wrapper(self.tcx, *pointee, self.wrapped_c) {
                                 self.c.field_ref_wrapped += 1;
                                 self.sites.field_ref.push(span_site(self.tcx, e.span));
@@ -765,7 +769,10 @@ impl<'a, 'tcx> Visitor<'tcx> for BodyVisitor<'a, 'tcx> {
 /// family emits the wrapper newtype (one per representation); the `impl_*!`
 /// family binds a lifecycle contract or an ownership marker to it.
 const CRUSTIFY_MACROS: &[&str] = &[
-    "define_ctype", "impl_dropped", "impl_cloned", "impl_cvalued",
+    "define_ctype",
+    "impl_dropped",
+    "impl_cloned",
+    "impl_cvalued",
 ];
 
 /// Recursively tally references to crustify-crate structs in a type.
@@ -821,12 +828,20 @@ fn usage_json(tcx: TyCtxt<'_>, krate: rustc_span::Symbol) -> String {
         let region = call_region(tcx, owner.to_def_id());
         let typeck = tcx.typeck(owner);
         let mut callees: Vec<(DefId, rustc_span::Span)> = Vec::new();
-        CallCollector { typeck, out: &mut callees }.visit_body(tcx.hir_body_owned_by(owner));
+        CallCollector {
+            typeck,
+            out: &mut callees,
+        }
+        .visit_body(tcx.hir_body_owned_by(owner));
         for (did, sp) in callees {
             if tcx.is_foreign_item(did) {
                 let key = format!("{}::{}", tcx.crate_name(did.krate), tcx.item_name(did));
                 *ffi_calls.entry(key.clone()).or_default() += 1;
-                ffi_sites.entry(key).or_default().entry(region.clone()).or_default()
+                ffi_sites
+                    .entry(key)
+                    .or_default()
+                    .entry(region.clone())
+                    .or_default()
                     .push(span_site(tcx, sp));
             }
         }
@@ -837,7 +852,12 @@ fn usage_json(tcx: TyCtxt<'_>, krate: rustc_span::Symbol) -> String {
         match tcx.def_kind(did) {
             DefKind::Fn | DefKind::AssocFn => {
                 let sig = tcx.fn_sig(did).skip_binder().skip_binder();
-                for t in sig.inputs().iter().copied().chain(std::iter::once(sig.output())) {
+                for t in sig
+                    .inputs()
+                    .iter()
+                    .copied()
+                    .chain(std::iter::once(sig.output()))
+                {
                     count_ty(tcx, t, &mut types);
                 }
             }
@@ -849,7 +869,9 @@ fn usage_json(tcx: TyCtxt<'_>, krate: rustc_span::Symbol) -> String {
             DefKind::Impl { of_trait: true } => {
                 let tdid = tcx.impl_trait_ref(did).skip_binder().def_id;
                 if tcx.crate_name(tdid.krate).as_str() == "crustify" {
-                    *trait_impls.entry(tcx.item_name(tdid).to_string()).or_default() += 1;
+                    *trait_impls
+                        .entry(tcx.item_name(tdid).to_string())
+                        .or_default() += 1;
                 }
             }
             _ => {}
@@ -859,14 +881,20 @@ fn usage_json(tcx: TyCtxt<'_>, krate: rustc_span::Symbol) -> String {
         if let ExpnKind::Macro(MacroKind::Bang, name) = ctxt.outer_expn_data().kind {
             if let Some(last) = name.as_str().rsplit("::").next() {
                 if CRUSTIFY_MACROS.contains(&last) {
-                    macros.entry(last.to_string()).or_default().insert(ctxt.outer_expn());
+                    macros
+                        .entry(last.to_string())
+                        .or_default()
+                        .insert(ctxt.outer_expn());
                 }
             }
         }
     }
 
     let obj = |m: &BTreeMap<String, u64>| {
-        m.iter().map(|(k, v)| format!("\"{k}\":{v}")).collect::<Vec<_>>().join(",")
+        m.iter()
+            .map(|(k, v)| format!("\"{k}\":{v}"))
+            .collect::<Vec<_>>()
+            .join(",")
     };
     let macros_obj = macros
         .iter()
@@ -892,68 +920,6 @@ fn usage_json(tcx: TyCtxt<'_>, krate: rustc_span::Symbol) -> String {
 }
 
 // ---------------------------------------------------------------- seed mode
-
-#[derive(Clone, Copy, PartialEq)]
-enum SeedKind {
-    Type,
-    Func,
-}
-
-struct Seed {
-    name: String,
-    kind: SeedKind,
-    repr: DefId,          // wrapper struct (Type) or fn (Func)
-    c_dids: Vec<DefId>,   // wrapped C types (Type seed) — naked type-ref targets
-    c_names: Vec<String>, // C tags — selector match, and `*-sys` call match (Func)
-}
-
-fn def_file(tcx: TyCtxt<'_>, did: DefId) -> String {
-    tcx.sess.source_map().span_to_filename(tcx.def_span(did)).into_local_path()
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_default()
-}
-
-/// Resolve the seed set from `UM_SEED_*` env filters (union semantics).
-fn resolve_seeds(tcx: TyCtxt<'_>) -> Vec<Seed> {
-    let names: Vec<String> = std::env::var("UM_SEED_NAME")
-        .unwrap_or_default().split_whitespace().map(str::to_string).collect();
-    let file = std::env::var("UM_SEED_FILE").ok().filter(|s| !s.is_empty());
-    let dir = std::env::var("UM_SEED_DIR").ok().filter(|s| !s.is_empty());
-    let all = std::env::var_os("UM_SEED_ALL").is_some();
-
-    let mut seeds = Vec::new();
-    for ld in tcx.hir_crate_items(()).definitions() {
-        let did = ld.to_def_id();
-        let kind = match tcx.def_kind(did) {
-            DefKind::Struct if is_wrapper(tcx, did) => SeedKind::Type,
-            DefKind::Fn | DefKind::AssocFn => SeedKind::Func,
-            _ => continue,
-        };
-        let rust_name = tcx.item_name(did).to_string();
-        let (c_dids, c_names) = match kind {
-            SeedKind::Type => {
-                let cs = wrapper_c_tys(tcx, did);
-                let ns = cs.iter().map(|c| tcx.item_name(*c).to_string()).collect();
-                (cs, ns)
-            }
-            // For a fn, the C tag is its name (ffi_export re-exports carry the C name).
-            SeedKind::Func => (Vec::new(), vec![rust_name.clone()]),
-        };
-        let matched = if !names.is_empty() {
-            names.iter().any(|n| *n == rust_name || c_names.iter().any(|c| c == n))
-        } else if let Some(f) = &file {
-            def_file(tcx, did).ends_with(f.as_str())
-        } else if let Some(d) = &dir {
-            def_file(tcx, did).contains(d.as_str())
-        } else {
-            all
-        };
-        if matched {
-            seeds.push(Seed { name: rust_name, kind, repr: did, c_dids, c_names });
-        }
-    }
-    seeds
-}
 
 fn enclosing_impl_self(tcx: TyCtxt<'_>, mut did: DefId) -> Option<DefId> {
     while let Some(parent) = tcx.opt_parent(did) {
@@ -989,27 +955,8 @@ fn call_region(tcx: TyCtxt<'_>, mut did: DefId) -> String {
     "free_fn".to_string()
 }
 
-/// Recursive count of `target` Adt occurrences in a type.
-fn count_ty_did(t: Ty<'_>, target: DefId) -> u64 {
-    let mut n = 0;
-    match t.kind() {
-        ty::TyKind::Adt(def, args) => {
-            if def.did() == target {
-                n += 1;
-            }
-            for a in args.types() {
-                n += count_ty_did(a, target);
-            }
-        }
-        ty::TyKind::RawPtr(p, _) | ty::TyKind::Ref(_, p, _) => n += count_ty_did(*p, target),
-        ty::TyKind::Slice(e) | ty::TyKind::Array(e, _) => n += count_ty_did(*e, target),
-        _ => {}
-    }
-    n
-}
-
-/// Collect free-fn call callee `DefId`s + their call-site spans in a body
-/// (for `ffi::S(` / `*-sys` naked detection with locations).
+/// Collect free-function callee `DefId`s + call-site spans in a body, for FFI
+/// call classification and named-symbol resolution.
 struct CallCollector<'a, 'tcx> {
     typeck: &'tcx TypeckResults<'tcx>,
     out: &'a mut Vec<(DefId, Span)>,
@@ -1030,11 +977,9 @@ impl<'a, 'tcx> Visitor<'tcx> for CallCollector<'a, 'tcx> {
 /// If `did` is a `type A = B;` alias, the ADT it names.
 ///
 /// A HIR path resolves to whatever the source literally wrote, so
-/// `*mut ffi::ENGINE` resolves to the ALIAS `ENGINE`, never to `engine_st`.
-/// Typeck normalizes, so the naked COUNT sees through it — without this the
-/// SITES would not, and a count would land with nowhere to look. bindgen
-/// re-emits OpenSSL's typedefs (`pub type ENGINE = engine_st;`), so this is the
-/// common spelling rather than a corner case.
+/// `*mut ffi::ENGINE` resolves to the alias `ENGINE`, never to `engine_st`.
+/// Named type sites accept both spellings through this one-hop resolution;
+/// bindgen's `pub type ENGINE = engine_st;` form is the common case.
 fn alias_target(tcx: TyCtxt<'_>, did: DefId) -> Option<DefId> {
     if !matches!(tcx.def_kind(did), DefKind::TyAlias) {
         return None;
@@ -1045,23 +990,25 @@ fn alias_target(tcx: TyCtxt<'_>, did: DefId) -> Option<DefId> {
     }
 }
 
-/// Collect spans of HIR type-references that resolve to `target` (a seed's
-/// wrapped C type), for type-seed `naked_sites`. The naked COUNT is
-/// typeck-based (`count_ty_did`); these spans are the syntactic occurrences the
-/// agent actually edits, matched directly or through one typedef hop.
-struct NakedTyVisitor<'a, 'tcx> {
+/// Collect requested names mentioned by one HIR type, through one alias hop.
+struct NamedPathVisitor<'a, 'tcx> {
     tcx: TyCtxt<'tcx>,
-    target: DefId,
-    out: &'a mut Vec<Span>,
+    wanted: &'a HashSet<String>,
+    hits: &'a mut HashSet<String>,
 }
-impl<'a, 'tcx> Visitor<'tcx> for NakedTyVisitor<'a, 'tcx> {
+impl<'a, 'tcx> Visitor<'tcx> for NamedPathVisitor<'a, 'tcx> {
     fn visit_ty(&mut self, t: &'tcx hir::Ty<'tcx, hir::AmbigArg>) {
         if let hir::TyKind::Path(hir::QPath::Resolved(_, path)) = t.kind {
             if let hir::def::Res::Def(_, did) = path.res {
-                if did == self.target
-                    || alias_target(self.tcx, did) == Some(self.target)
-                {
-                    self.out.push(t.span);
+                let direct = self.tcx.item_name(did).to_string();
+                if self.wanted.contains(&direct) {
+                    self.hits.insert(direct);
+                }
+                if let Some(target) = alias_target(self.tcx, did) {
+                    let underlying = self.tcx.item_name(target).to_string();
+                    if self.wanted.contains(&underlying) {
+                        self.hits.insert(underlying);
+                    }
                 }
             }
         }
@@ -1069,145 +1016,456 @@ impl<'a, 'tcx> Visitor<'tcx> for NakedTyVisitor<'a, 'tcx> {
     }
 }
 
-/// `UM_MODE=seed`: per-seed audit metrics (own-region + naked footprint).
-fn seed_json(tcx: TyCtxt<'_>, krate: rustc_span::Symbol) -> String {
-    // wrapped C types (for naked-ref matching + wrapper detection reuse).
-    let wrapped_c: HashSet<DefId> = with_wrappers(tcx, |w| w.values().flatten().copied().collect());
-    let seeds = resolve_seeds(tcx);
-    let mut metrics: Vec<Counts> = (0..seeds.len()).map(|_| Counts::default()).collect();
-    let mut sites: Vec<Sites> = (0..seeds.len()).map(|_| Sites::default()).collect();
-    let mut region_owners: Vec<u64> = vec![0; seeds.len()];
-    let mut naked: Vec<u64> = vec![0; seeds.len()];
+/// Find raw-pointer type declarations that mention a requested C type.
+struct RawPtrDeclVisitor<'a, 'tcx> {
+    tcx: TyCtxt<'tcx>,
+    wanted: &'a HashSet<String>,
+    sites: &'a mut HashMap<String, Vec<(String, usize)>>,
+}
+impl<'a, 'tcx> Visitor<'tcx> for RawPtrDeclVisitor<'a, 'tcx> {
+    type NestedFilter = nested_filter::All;
 
-    for owner in tcx.hir_body_owners() {
-        let did = owner.to_def_id();
-        let impl_self = enclosing_impl_self(tcx, did);
-        // which seed (if any) owns this body?
-        let region = seeds.iter().position(|s| match s.kind {
-            SeedKind::Type => impl_self == Some(s.repr),
-            SeedKind::Func => did == s.repr,
-        });
+    fn maybe_tcx(&mut self) -> Self::MaybeTyCtxt {
+        self.tcx
+    }
 
-        if let Some(i) = region {
-            region_owners[i] += 1;
-            let in_wrapper = in_wrapper_impl(tcx, did);
-            let in_ffi = in_ffi_export(tcx, did);
-            let in_impl = in_any_impl(tcx, did);
-            {
-                let typeck = tcx.typeck(owner);
-                let body = tcx.hir_body_owned_by(owner);
-                let mut v = BodyVisitor {
-                    tcx, typeck, depth: 0, in_wrapper, in_ffi, in_impl,
-                    wrapped_c: &wrapped_c, c: &mut metrics[i], sites: &mut sites[i],
-                };
-                v.visit_body(body);
+    fn visit_ty(&mut self, t: &'tcx hir::Ty<'tcx, hir::AmbigArg>) {
+        if let hir::TyKind::Ptr(p) = t.kind {
+            let mut hits = HashSet::new();
+            NamedPathVisitor {
+                tcx: self.tcx,
+                wanted: self.wanted,
+                hits: &mut hits,
             }
-            if matches!(tcx.def_kind(did), DefKind::Fn | DefKind::AssocFn) {
-                let sig = tcx.fn_sig(did).skip_binder().skip_binder();
-                let seam = is_seam_fn(tcx, did);
-                let span = tcx.def_span(did);
-                for t in sig.inputs().iter().copied().chain(std::iter::once(sig.output())) {
-                    if is_ref_to_type_wrapper(tcx, t) {
-                        metrics[i].ref_to_type_wrapper += 1;
-                    }
-                    if is_void_ptr(tcx, t) && !(seam || in_ffi) {
-                        metrics[i].void_ptr_smell += 1;
-                        sites[i].void_ptr.push(span_site(tcx, span));
-                    }
-                    // raw ptr to a wrapped C type in a non-seam region signature:
-                    // a "use the wrapper" smell, recorded with its site.
-                    if !seam {
-                        if let Some(p) = raw_pointee(t) {
-                            if matches!(p.kind(), ty::TyKind::Adt(def, _)
-                                if wrapped_c.contains(&def.did()))
-                            {
-                                sites[i].raw_ptr.push(span_site(tcx, span));
-                            }
-                        }
-                    }
+            .visit_ty_unambig(p.ty);
+            let site = span_site(self.tcx, t.span);
+            for name in hits {
+                self.sites.entry(name).or_default().push(site.clone());
+            }
+        }
+        intravisit::walk_ty(self, t);
+    }
+}
+
+fn semantic_names(
+    tcx: TyCtxt<'_>,
+    t: Ty<'_>,
+    wanted: &HashSet<String>,
+    hits: &mut HashSet<String>,
+) {
+    match t.kind() {
+        ty::TyKind::Adt(def, args) => {
+            let name = tcx.item_name(def.did()).to_string();
+            if wanted.contains(&name) {
+                hits.insert(name);
+            }
+            for arg in args.types() {
+                semantic_names(tcx, arg, wanted, hits);
+            }
+        }
+        ty::TyKind::RawPtr(p, _) | ty::TyKind::Ref(_, p, _) => {
+            semantic_names(tcx, *p, wanted, hits)
+        }
+        ty::TyKind::Slice(e) | ty::TyKind::Array(e, _) => semantic_names(tcx, *e, wanted, hits),
+        ty::TyKind::Tuple(ts) => {
+            for t in ts.iter() {
+                semantic_names(tcx, t, wanted, hits);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Find `*p` expressions where `p` points at a requested C type.
+struct RawDerefVisitor<'a, 'tcx> {
+    tcx: TyCtxt<'tcx>,
+    typeck: &'tcx TypeckResults<'tcx>,
+    wanted: &'a HashSet<String>,
+    sites: &'a mut HashMap<String, Vec<(String, usize)>>,
+}
+impl<'a, 'tcx> Visitor<'tcx> for RawDerefVisitor<'a, 'tcx> {
+    fn visit_expr(&mut self, e: &'tcx hir::Expr<'tcx>) {
+        if let hir::ExprKind::Unary(hir::UnOp::Deref, inner) = e.kind {
+            if let ty::TyKind::RawPtr(pointee, _) = self.typeck.expr_ty(inner).kind() {
+                let mut hits = HashSet::new();
+                semantic_names(self.tcx, *pointee, self.wanted, &mut hits);
+                let site = span_site(self.tcx, e.span);
+                for name in hits {
+                    self.sites.entry(name).or_default().push(site.clone());
                 }
             }
         }
+        intravisit::walk_expr(self, e);
+    }
+}
 
-        // naked: only consider non-sanctioned owners.
-        let sanctioned = is_seam_fn(tcx, did)
-            || in_ffi_export(tcx, did)
-            || tcx.def_span(did).from_expansion();
-        if sanctioned {
+/// Find every raw-pointer declaration in one symbol's signature/body region.
+struct AnyRawPtrDeclVisitor<'a, 'tcx> {
+    tcx: TyCtxt<'tcx>,
+    sites: &'a mut Vec<(String, usize)>,
+}
+impl<'a, 'tcx> Visitor<'tcx> for AnyRawPtrDeclVisitor<'a, 'tcx> {
+    fn visit_ty(&mut self, t: &'tcx hir::Ty<'tcx, hir::AmbigArg>) {
+        if matches!(t.kind, hir::TyKind::Ptr(_)) {
+            self.sites.push(span_site(self.tcx, t.span));
+        }
+        intravisit::walk_ty(self, t);
+    }
+}
+
+/// Find every raw-pointer dereference in one symbol's body region.
+struct AnyRawDerefVisitor<'a, 'tcx> {
+    tcx: TyCtxt<'tcx>,
+    typeck: &'tcx TypeckResults<'tcx>,
+    sites: &'a mut Vec<(String, usize)>,
+}
+impl<'a, 'tcx> Visitor<'tcx> for AnyRawDerefVisitor<'a, 'tcx> {
+    fn visit_expr(&mut self, e: &'tcx hir::Expr<'tcx>) {
+        if let hir::ExprKind::Unary(hir::UnOp::Deref, inner) = e.kind {
+            if matches!(self.typeck.expr_ty(inner).kind(), ty::TyKind::RawPtr(..)) {
+                self.sites.push(span_site(self.tcx, e.span));
+            }
+        }
+        intravisit::walk_expr(self, e);
+    }
+}
+
+/// Requested source or linked symbol names represented by a function DefId.
+fn matching_symbol_names(tcx: TyCtxt<'_>, did: DefId, wanted: &HashSet<String>) -> HashSet<String> {
+    let mut hits = HashSet::new();
+    if !matches!(tcx.def_kind(did), DefKind::Fn | DefKind::AssocFn) {
+        return hits;
+    }
+    if let Some(item_name) = tcx.opt_item_name(did) {
+        let name = item_name.to_string();
+        if wanted.contains(&name) {
+            hits.insert(name);
+        }
+    }
+    if let Some(symbol_name) = tcx.codegen_fn_attrs(did).symbol_name {
+        let name = symbol_name.to_string();
+        if wanted.contains(&name) {
+            hits.insert(name);
+        }
+    }
+    hits
+}
+
+fn add_symbol_sites(
+    names: &HashSet<String>,
+    sites: &[(String, usize)],
+    out: &mut HashMap<String, Vec<(String, usize)>>,
+) {
+    for name in names {
+        out.entry(name.clone())
+            .or_default()
+            .extend_from_slice(sites);
+    }
+}
+
+/// Resolve function/link-name seeds. A local definition owns its signature and
+/// body. A call to an external C symbol assigns the enclosing wrapper body's
+/// raw-pointer surface to that symbol as well.
+fn collect_symbol_sites(
+    tcx: TyCtxt<'_>,
+    wanted: &HashSet<String>,
+    raw_ptr: &mut HashMap<String, Vec<(String, usize)>>,
+    raw_deref: &mut HashMap<String, Vec<(String, usize)>>,
+) -> HashSet<String> {
+    let mut resolved = HashSet::new();
+
+    // Definitions without bodies (notably `extern` declarations) still seed
+    // and contribute their signature when they live in an audited crate.
+    for ld in tcx.hir_crate_items(()).definitions() {
+        let did = ld.to_def_id();
+        let hits = matching_symbol_names(tcx, did, wanted);
+        if hits.is_empty() {
             continue;
         }
-        // type-seed naked: refs to `ffi::C` in this fn's signature. COUNT via
-        // typeck (`count_ty_did`, alias-proof); SITES via the HIR signature
-        // (`NakedTyVisitor`, the syntactic occurrences the agent edits).
-        if matches!(tcx.def_kind(did), DefKind::Fn | DefKind::AssocFn) {
-            let sig = tcx.fn_sig(did).skip_binder().skip_binder();
-            let hir_id = tcx.local_def_id_to_hir_id(owner);
-            let decl = tcx.hir_node(hir_id).fn_decl();
-            for (i, s) in seeds.iter().enumerate() {
-                for c in s.c_dids.iter().copied().filter(|_| s.kind == SeedKind::Type) {
-                    for t in sig.inputs().iter().copied().chain(std::iter::once(sig.output())) {
-                        naked[i] += count_ty_did(t, c);
-                    }
-                    if let Some(decl) = decl {
-                        let mut spans: Vec<Span> = Vec::new();
-                        let mut v = NakedTyVisitor { tcx, target: c, out: &mut spans };
-                        for t in decl.inputs {
-                            if let Some(at) = t.try_as_ambig_ty() {
-                                v.visit_ty(at);
-                            }
-                        }
-                        if let hir::FnRetTy::Return(t) = decl.output {
-                            if let Some(at) = t.try_as_ambig_ty() {
-                                v.visit_ty(at);
-                            }
-                        }
-                        for sp in spans {
-                            sites[i].naked.push(span_site(tcx, sp));
-                        }
-                    }
+        resolved.extend(hits.iter().cloned());
+        if let Some(local) = did.as_local() {
+            if let Some(decl) = tcx.expect_hir_owner_node(local).fn_decl() {
+                let mut sites = Vec::new();
+                AnyRawPtrDeclVisitor {
+                    tcx,
+                    sites: &mut sites,
                 }
-            }
-        }
-        // func-seed naked: calls to a `*-sys` fn matching the C tag, in this body.
-        let typeck = tcx.typeck(owner);
-        let mut callees: Vec<(DefId, Span)> = Vec::new();
-        CallCollector { typeck, out: &mut callees }.visit_body(tcx.hir_body_owned_by(owner));
-        for (cdid, cspan) in callees {
-            let kn = tcx.crate_name(cdid.krate);
-            if kn.as_str().ends_with("_sys") {
-                let nm = tcx.item_name(cdid);
-                for (i, s) in seeds.iter().enumerate() {
-                    if s.kind == SeedKind::Func
-                        && s.c_names.iter().any(|c| c == nm.as_str()) {
-                        naked[i] += 1;
-                        sites[i].naked.push(span_site(tcx, cspan));
-                    }
-                }
+                .visit_fn_decl(decl);
+                add_symbol_sites(&hits, &sites, raw_ptr);
             }
         }
     }
 
-    let entries: Vec<String> = seeds.iter().enumerate().map(|(i, s)| {
-        let m = &metrics[i];
-        let st = &sites[i];
-        let kind = if s.kind == SeedKind::Type { "type" } else { "func" };
-        format!(
-            "{{\"name\":\"{}\",\"c_name\":\"{}\",\"kind\":\"{}\",\"region_owners\":{},\"unsafe_blocks\":{},\"unsafe_block_code_lines\":{},\"raw_ptr_derefs\":{},\"field_proj\":{},\"field_proj_outside_impl\":{},\"field_ref_wrapped\":{},\"ref_to_type_wrapper\":{},\"void_ptr_smell\":{},\"naked\":{},\"naked_sites\":{},\"raw_ptr_sites\":{},\"void_ptr_sites\":{},\"field_proj_sites\":{}}}",
-            s.name, s.c_names.join("|"), kind, region_owners[i], m.unsafe_blocks, m.unsafe_block_code_lines,
-            m.raw_ptr_derefs,
-            m.field_proj_wrapped, m.field_proj_outside_impl, m.field_ref_wrapped, m.ref_to_type_wrapper,
-            m.void_ptr_smell, naked[i],
-            sites_json(&st.naked), sites_json(&st.raw_ptr),
-            sites_json(&st.void_ptr), sites_json(&st.field_proj),
-        )
+    for owner in tcx.hir_body_owners() {
+        let body = tcx.hir_body_owned_by(owner);
+        let typeck = tcx.typeck(owner);
+        let mut hits = matching_symbol_names(tcx, owner.to_def_id(), wanted);
+        let mut calls = Vec::new();
+        CallCollector {
+            typeck,
+            out: &mut calls,
+        }
+        .visit_body(body);
+        for (callee, _) in calls {
+            hits.extend(matching_symbol_names(tcx, callee, wanted));
+        }
+        if hits.is_empty() {
+            continue;
+        }
+        resolved.extend(hits.iter().cloned());
+
+        // Include the enclosing wrapper signature for call-resolved symbols.
+        if let Some(decl) = tcx.expect_hir_owner_node(owner).fn_decl() {
+            let mut sites = Vec::new();
+            AnyRawPtrDeclVisitor {
+                tcx,
+                sites: &mut sites,
+            }
+            .visit_fn_decl(decl);
+            add_symbol_sites(&hits, &sites, raw_ptr);
+        }
+
+        let mut ptr_sites = Vec::new();
+        AnyRawPtrDeclVisitor {
+            tcx,
+            sites: &mut ptr_sites,
+        }
+        .visit_body(body);
+        add_symbol_sites(&hits, &ptr_sites, raw_ptr);
+
+        let mut deref_sites = Vec::new();
+        AnyRawDerefVisitor {
+            tcx,
+            typeck,
+            sites: &mut deref_sites,
+        }
+        .visit_body(body);
+        add_symbol_sites(&hits, &deref_sites, raw_deref);
+    }
+    resolved
+}
+
+/// Local structural wrappers grouped by the requested C type they contain.
+fn named_wrappers(tcx: TyCtxt<'_>, wanted: &HashSet<String>) -> HashMap<DefId, Vec<String>> {
+    with_wrappers(tcx, |wrappers| {
+        wrappers
+            .iter()
+            .filter_map(|(wrapper, c_types)| {
+                let mut names: Vec<String> = c_types
+                    .iter()
+                    .filter_map(|c_type| {
+                        let name = tcx.item_name(*c_type).to_string();
+                        wanted.contains(&name).then_some(name)
+                    })
+                    .collect();
+                names.sort();
+                names.dedup();
+                (!names.is_empty()).then_some((*wrapper, names))
+            })
+            .collect()
+    })
+}
+
+fn hir_adt_def<A>(tcx: TyCtxt<'_>, t: &hir::Ty<'_, A>) -> Option<DefId> {
+    let hir::TyKind::Path(hir::QPath::Resolved(_, path)) = t.kind else {
+        return None;
+    };
+    let hir::def::Res::Def(_, did) = path.res else {
+        return None;
+    };
+    Some(alias_target(tcx, did).unwrap_or(did))
+}
+
+/// Find explicit `&[Wrapper]` and `&mut [Wrapper]` materializations.
+struct WrapperSliceVisitor<'a, 'tcx> {
+    tcx: TyCtxt<'tcx>,
+    wrappers: &'a HashMap<DefId, Vec<String>>,
+    shared: &'a mut HashMap<String, Vec<(String, usize)>>,
+    mutable: &'a mut HashMap<String, Vec<(String, usize)>>,
+}
+impl<'a, 'tcx> Visitor<'tcx> for WrapperSliceVisitor<'a, 'tcx> {
+    type NestedFilter = nested_filter::All;
+
+    fn maybe_tcx(&mut self) -> Self::MaybeTyCtxt {
+        self.tcx
+    }
+
+    fn visit_ty(&mut self, t: &'tcx hir::Ty<'tcx, hir::AmbigArg>) {
+        if let hir::TyKind::Ref(_, borrowed) = t.kind {
+            if let hir::TyKind::Slice(element) = borrowed.ty.kind {
+                if let Some(wrapper) = hir_adt_def(self.tcx, element) {
+                    if let Some(names) = self.wrappers.get(&wrapper) {
+                        let site = span_site(self.tcx, t.span);
+                        let sites = if borrowed.mutbl == hir::Mutability::Mut {
+                            &mut self.mutable
+                        } else {
+                            &mut self.shared
+                        };
+                        for name in names {
+                            sites.entry(name.clone()).or_default().push(site.clone());
+                        }
+                    }
+                }
+            }
+        }
+        intravisit::walk_ty(self, t);
+    }
+}
+
+/// Find expressions that form or return a wrapper slice even when its type is
+/// inferred (notably `slice::from_raw_parts::<Wrapper>(...)`).
+struct MaterializedSliceVisitor<'a, 'tcx> {
+    tcx: TyCtxt<'tcx>,
+    typeck: &'tcx TypeckResults<'tcx>,
+    wrappers: &'a HashMap<DefId, Vec<String>>,
+    shared: &'a mut HashMap<String, Vec<(String, usize)>>,
+    mutable: &'a mut HashMap<String, Vec<(String, usize)>>,
+}
+impl<'a, 'tcx> Visitor<'tcx> for MaterializedSliceVisitor<'a, 'tcx> {
+    fn visit_expr(&mut self, e: &'tcx hir::Expr<'tcx>) {
+        if matches!(
+            e.kind,
+            hir::ExprKind::AddrOf(..) | hir::ExprKind::Call(..) | hir::ExprKind::MethodCall(..)
+        ) {
+            if let ty::TyKind::Ref(_, pointee, mutbl) = self.typeck.expr_ty_adjusted(e).kind() {
+                if let ty::TyKind::Slice(element) = pointee.kind() {
+                    if let ty::TyKind::Adt(def, _) = element.kind() {
+                        if let Some(names) = self.wrappers.get(&def.did()) {
+                            let site = span_site(self.tcx, e.span);
+                            let sites = if *mutbl == hir::Mutability::Mut {
+                                &mut self.mutable
+                            } else {
+                                &mut self.shared
+                            };
+                            for name in names {
+                                sites.entry(name.clone()).or_default().push(site.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        intravisit::walk_expr(self, e);
+    }
+}
+
+/// `UM_MODE=seed`: requested C-type or symbol sites.
+fn seed_json(tcx: TyCtxt<'_>, krate: rustc_span::Symbol) -> String {
+    let mut names: Vec<String> = std::env::var("UM_SEED_NAME")
+        .unwrap_or_default()
+        .split_whitespace()
+        .map(str::to_string)
+        .collect();
+    names.sort();
+    names.dedup();
+    let wanted: HashSet<String> = names.iter().cloned().collect();
+    let mut raw_ptr: HashMap<String, Vec<(String, usize)>> = HashMap::new();
+    let mut raw_deref: HashMap<String, Vec<(String, usize)>> = HashMap::new();
+    let mut deref_impl: HashMap<String, Vec<(String, usize)>> = HashMap::new();
+    let mut deref_mut_impl: HashMap<String, Vec<(String, usize)>> = HashMap::new();
+    let mut slice_ref: HashMap<String, Vec<(String, usize)>> = HashMap::new();
+    let mut slice_mut: HashMap<String, Vec<(String, usize)>> = HashMap::new();
+    let wrappers = named_wrappers(tcx, &wanted);
+
+    tcx.hir_walk_toplevel_module(&mut RawPtrDeclVisitor {
+        tcx,
+        wanted: &wanted,
+        sites: &mut raw_ptr,
+    });
+    tcx.hir_walk_toplevel_module(&mut WrapperSliceVisitor {
+        tcx,
+        wrappers: &wrappers,
+        shared: &mut slice_ref,
+        mutable: &mut slice_mut,
+    });
+    for owner in tcx.hir_body_owners() {
+        RawDerefVisitor {
+            tcx,
+            typeck: tcx.typeck(owner),
+            wanted: &wanted,
+            sites: &mut raw_deref,
+        }
+        .visit_body(tcx.hir_body_owned_by(owner));
+        MaterializedSliceVisitor {
+            tcx,
+            typeck: tcx.typeck(owner),
+            wrappers: &wrappers,
+            shared: &mut slice_ref,
+            mutable: &mut slice_mut,
+        }
+        .visit_body(tcx.hir_body_owned_by(owner));
+    }
+    let symbol_hits = collect_symbol_sites(tcx, &wanted, &mut raw_ptr, &mut raw_deref);
+    // ffibox itself intentionally implements Deref/DerefMut for its borrowed
+    // handles. Report only manual implementations in wrapper crates.
+    if krate.as_str() != "ffibox" {
+        for ld in tcx.hir_crate_items(()).definitions() {
+            let did = ld.to_def_id();
+            if !matches!(tcx.def_kind(did), DefKind::Impl { of_trait: true }) {
+                continue;
+            }
+            let trait_did = tcx.impl_trait_ref(did).skip_binder().def_id;
+            if tcx.crate_name(trait_did.krate).as_str() != "core" {
+                continue;
+            }
+            let trait_symbol = tcx.item_name(trait_did);
+            let trait_name = trait_symbol.as_str();
+            if !matches!(trait_name, "Deref" | "DerefMut") {
+                continue;
+            }
+            let Some(wrapper) = impl_self_def(tcx, did) else {
+                continue;
+            };
+            let Some(wrapper_names) = wrappers.get(&wrapper) else {
+                continue;
+            };
+            let site = span_site(tcx, tcx.def_span(did));
+            let sites = if trait_name == "DerefMut" {
+                &mut deref_mut_impl
+            } else {
+                &mut deref_impl
+            };
+            for name in wrapper_names {
+                sites.entry(name.clone()).or_default().push(site.clone());
+            }
+        }
+    }
+
+    let entries: Vec<String> = names.iter().filter_map(|name| {
+        let ptr = raw_ptr.get(name).map(Vec::as_slice).unwrap_or(&[]);
+        let deref = raw_deref.get(name).map(Vec::as_slice).unwrap_or(&[]);
+        let deref_impls = deref_impl.get(name).map(Vec::as_slice).unwrap_or(&[]);
+        let deref_mut_impls = deref_mut_impl.get(name).map(Vec::as_slice).unwrap_or(&[]);
+        let shared_slices = slice_ref.get(name).map(Vec::as_slice).unwrap_or(&[]);
+        let mutable_slices = slice_mut.get(name).map(Vec::as_slice).unwrap_or(&[]);
+        if !symbol_hits.contains(name) && ptr.is_empty() && deref.is_empty()
+            && deref_impls.is_empty()
+            && deref_mut_impls.is_empty() && shared_slices.is_empty()
+            && mutable_slices.is_empty()
+        {
+            return None;
+        }
+        Some(format!(
+            "{{\"name\":\"{}\",\"raw_ptr_sites\":{},\"raw_deref_sites\":{},\"deref_impl_sites\":{},\"deref_mut_impl_sites\":{},\"slice_ref_sites\":{},\"slice_mut_sites\":{}}}",
+            name, sites_json(ptr), sites_json(deref), sites_json(deref_impls),
+            sites_json(deref_mut_impls), sites_json(shared_slices),
+            sites_json(mutable_slices),
+        ))
     }).collect();
-    format!("{{\"crate\":\"{krate}\",\"seeds\":[{}]}}", entries.join(","))
+    format!(
+        "{{\"crate\":\"{krate}\",\"seeds\":[{}]}}",
+        entries.join(",")
+    )
 }
 
 struct MetricsCallbacks;
 
 impl Callbacks for MetricsCallbacks {
-    fn after_analysis(&mut self, _compiler: &rustc_interface::interface::Compiler, tcx: TyCtxt<'_>) -> Compilation {
+    fn after_analysis(
+        &mut self,
+        _compiler: &rustc_interface::interface::Compiler,
+        tcx: TyCtxt<'_>,
+    ) -> Compilation {
         let krate = tcx.crate_name(rustc_span::def_id::LOCAL_CRATE);
         // Under cargo, only emit for workspace primary packages (skips deps and
         // build scripts); standalone (run.sh) always emits.
@@ -1221,10 +1479,9 @@ impl Callbacks for MetricsCallbacks {
             println!("{}", usage_json(tcx, krate));
             return Compilation::Continue;
         }
-        // Seed mode prints the per-seed JSON, then FALLS THROUGH to also emit the
-        // tree-wide global block below — so `crustify audit` gets both the seed
-        // surface and the global section + totals from a single compilation
-        // (the dispatcher merges the two stdout lines per crate).
+        // Named mode prints its site entries, then falls through to emit the
+        // crate-wide metrics block from the same compilation. The dispatcher
+        // merges both stdout lines per crate.
         if std::env::var("UM_MODE").as_deref() == Ok("seed") {
             println!("{}", seed_json(tcx, krate));
         }
@@ -1251,7 +1508,8 @@ impl Callbacks for MetricsCallbacks {
         }
         // Set of C types that have a wrapper (a safe wrapper exists). Each
         // wrapper contributes its seam's `type C`, either representation.
-        let wrapped_c: HashSet<DefId> = with_wrappers(tcx, |w| w.values().flatten().copied().collect());
+        let wrapped_c: HashSet<DefId> =
+            with_wrappers(tcx, |w| w.values().flatten().copied().collect());
 
         let mut c = Counts::default();
         let mut sites = Sites::default();
@@ -1274,7 +1532,9 @@ impl Callbacks for MetricsCallbacks {
                     // exists to keep at 0.
                     if is_layout {
                         c.wrapper_newtypes += 1;
-                        if !declared { c.wrapper_newtypes_undeclared += 1 }
+                        if !declared {
+                            c.wrapper_newtypes_undeclared += 1
+                        }
                     }
                     if declared {
                         c.wrapper_newtypes_declared += 1;
@@ -1287,9 +1547,10 @@ impl Callbacks for MetricsCallbacks {
                     // `TrivialClone` is a compiler-internal marker `#[derive(Clone)]`
                     // emits as an `unsafe impl`; it asserts nothing the author
                     // wrote and would swamp the real lifecycle contracts.
-                    let internal = tcx.item_name(
-                        tcx.impl_trait_ref(did).skip_binder().def_id
-                    ).as_str() == "TrivialClone";
+                    let internal = tcx
+                        .item_name(tcx.impl_trait_ref(did).skip_binder().def_id)
+                        .as_str()
+                        == "TrivialClone";
                     if !internal && tcx.impl_trait_header(did).safety.is_unsafe() {
                         c.unsafe_impls += 1;
                     }
@@ -1308,8 +1569,11 @@ impl Callbacks for MetricsCallbacks {
             {
                 let typeck = tcx.typeck(owner);
                 let mut callees: Vec<(DefId, Span)> = Vec::new();
-                CallCollector { typeck, out: &mut callees }
-                    .visit_body(tcx.hir_body_owned_by(owner));
+                CallCollector {
+                    typeck,
+                    out: &mut callees,
+                }
+                .visit_body(tcx.hir_body_owned_by(owner));
                 c.ffi_calls += callees
                     .iter()
                     .filter(|(d, _)| tcx.is_foreign_item(*d))
@@ -1322,8 +1586,15 @@ impl Callbacks for MetricsCallbacks {
                 let typeck = tcx.typeck(owner);
                 let body = tcx.hir_body_owned_by(owner);
                 let mut v = BodyVisitor {
-                    tcx, typeck, depth: 0, in_wrapper, in_ffi, in_impl,
-                    wrapped_c: &wrapped_c, c: &mut c, sites: &mut sites,
+                    tcx,
+                    typeck,
+                    depth: 0,
+                    in_wrapper,
+                    in_ffi,
+                    in_impl,
+                    wrapped_c: &wrapped_c,
+                    c: &mut c,
+                    sites: &mut sites,
                 };
                 v.visit_body(body);
             }
@@ -1332,7 +1603,12 @@ impl Callbacks for MetricsCallbacks {
                 let sig = tcx.fn_sig(did).skip_binder().skip_binder();
                 let seam = is_seam_fn(tcx, did);
                 // `&mut <wrapper>` and `*c_void` anywhere in the signature.
-                for t in sig.inputs().iter().copied().chain(std::iter::once(sig.output())) {
+                for t in sig
+                    .inputs()
+                    .iter()
+                    .copied()
+                    .chain(std::iter::once(sig.output()))
+                {
                     if is_ref_to_type_wrapper(tcx, t) {
                         c.ref_to_type_wrapper += 1;
                     }
@@ -1351,8 +1627,12 @@ impl Callbacks for MetricsCallbacks {
                 // unsafe; anything else is exporting an obligation.
                 if sig.safety().is_unsafe() {
                     c.unsafe_fns += 1;
-                    if seam || in_ffi { c.unsafe_fns_seam += 1 }
-                    if tcx.visibility(did).is_public() { c.unsafe_fns_pub += 1 }
+                    if seam || in_ffi {
+                        c.unsafe_fns_seam += 1
+                    }
+                    if tcx.visibility(did).is_public() {
+                        c.unsafe_fns_pub += 1
+                    }
                 }
                 // Raw-pointer args/rets: count EVERY position, then name the
                 // sanctioned subset. No position goes unreported.
@@ -1364,13 +1644,17 @@ impl Callbacks for MetricsCallbacks {
                 let own_self = enclosing_impl_self(tcx, did);
                 {
                     let mut tally = |p: Ty<'_>, is_ret: bool, c: &mut Counts| {
-                        if is_ret { c.raw_ptr_rets += 1 } else { c.raw_ptr_args += 1 }
+                        if is_ret {
+                            c.raw_ptr_rets += 1
+                        } else {
+                            c.raw_ptr_args += 1
+                        }
                         // A raw ptr to the method's OWN wrapper type (`*mut Self`
                         // in `free`/`dup`) is the type's raw-form lifecycle seam —
                         // you cannot pass `&Self` while destroying it. Sanctioned,
                         // and now COUNTED as such instead of dropped silently.
-                        let is_own = own_self
-                            .is_some_and(|s| p.ty_adt_def().map(|d| d.did()) == Some(s));
+                        let is_own =
+                            own_self.is_some_and(|s| p.ty_adt_def().map(|d| d.did()) == Some(s));
                         if sanctioned || is_own {
                             c.raw_ptr_seam += 1;
                             return;
@@ -1382,16 +1666,24 @@ impl Callbacks for MetricsCallbacks {
                         // / array boundary), not a smell. So count only the C case.
                         let w = matches!(p.kind(),
                             ty::TyKind::Adt(def, _) if wrapped_c.contains(&def.did()));
-                        if w { c.raw_ptr_wrapped += 1 }
-                        if in_wrapper { c.raw_ptr_in_wrapper += 1 }
+                        if w {
+                            c.raw_ptr_wrapped += 1
+                        }
+                        if in_wrapper {
+                            c.raw_ptr_in_wrapper += 1
+                        }
                         if w {
                             sites.raw_ptr.push(span_site(tcx, tcx.def_span(did)));
                         }
                     };
                     for inp in sig.inputs() {
-                        if let Some(p) = raw_pointee(*inp) { tally(p, false, &mut c); }
+                        if let Some(p) = raw_pointee(*inp) {
+                            tally(p, false, &mut c);
+                        }
                     }
-                    if let Some(p) = raw_pointee(sig.output()) { tally(p, true, &mut c); }
+                    if let Some(p) = raw_pointee(sig.output()) {
+                        tally(p, true, &mut c);
+                    }
                 }
             }
         }
@@ -1434,8 +1726,8 @@ impl Callbacks for MetricsCallbacks {
                 let did = ld.to_def_id();
                 let container = matches!(
                     tcx.def_kind(did),
-                    DefKind::Mod | DefKind::Impl { .. } | DefKind::Trait
-                        | DefKind::ForeignMod);
+                    DefKind::Mod | DefKind::Impl { .. } | DefKind::Trait | DefKind::ForeignMod
+                );
                 let sp = tcx.def_span(did).source_callsite();
                 let lo = sm.lookup_char_pos(sp.lo());
                 let hi = sm.lookup_char_pos(sp.hi());
@@ -1468,8 +1760,7 @@ impl Callbacks for MetricsCallbacks {
                     .extend(lo.line..=hi.line);
             }
             for sf in sm.files().iter() {
-                let (Some(src), Some(set)) = (&sf.src, covered.get(&sf.start_pos.0))
-                else {
+                let (Some(src), Some(set)) = (&sf.src, covered.get(&sf.start_pos.0)) else {
                     continue;
                 };
                 c.code_lines += src
@@ -1493,7 +1784,10 @@ impl Callbacks for MetricsCallbacks {
 
 fn main() {
     let mut args: Vec<String> = std::env::args().collect();
-    if !args.iter().any(|a| a == "--sysroot" || a.starts_with("--sysroot=")) {
+    if !args
+        .iter()
+        .any(|a| a == "--sysroot" || a.starts_with("--sysroot="))
+    {
         // `SYSROOT` env (set to the *nightly* sysroot) wins; else ask rustc.
         let sysroot = std::env::var("SYSROOT").unwrap_or_else(|_| {
             let out = std::process::Command::new("rustc")

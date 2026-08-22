@@ -17,10 +17,15 @@ crustify-audit /path/to/crate unsafe      # deterministic, standalone
 crustify-audit /path/to/crate ub          # agentic; runs the pass itself
 ```
 
-Artifacts land in `<crate>/crustify/audit/` — `advisories/`, `notes/`, `tmp/`,
+Artifacts land in `<repo>/crustify/audit/` — `advisories/`, `notes/`, `tmp/`,
 `logs/`, `unsafe.json`. Under the directory crustify-cli uses, so
 auditing a campaign target puts the audit beside the campaign, in its own
 subdirectory so the two tools' artifacts stay separable.
+
+Campaigns ignore `audit/unsafe.json` in their canonical `crustify/.gitignore`.
+For an ordinary repository, `unsafe` maintains
+`crustify/audit/.gitignore` with `/unsafe.json`. Notes and advisories remain
+trackable in either layout.
 
 The agent authors the advisory itself, in prose, because the judgement it is
 there to exercise is the part a filled-in template would flatten.
@@ -29,7 +34,7 @@ The subject is an **ordinary repository**. The crate is its root, or
 `crustify/rust` if it has been through a campaign — nothing else is required:
 no CodeQL database, no scope config, no campaign artifacts. That is what makes
 this a separate binary from `crustify-cli` rather than another subcommand,
-since both crustify binaries mandate `<repo_root> <target>` and refuse to run
+since the campaign binaries mandate `<repo_root> <target>` and refuse to run
 without them.
 
 ## Usage
@@ -39,14 +44,19 @@ install, `PYTHONPATH=src python3 -m crustify_audit.cli` takes the same
 arguments.
 
 ```sh
-crustify-audit <repo> unsafe [--json]
+crustify-audit <repo> unsafe [--json] [--name NAME …]
 crustify-audit <repo> ub     [--model PROVIDER/MODEL] [--billing B] [--timeout MIN]
 ```
+
+For a Crustify campaign, pass the repository root, not `crustify/rust`; the
+tool discovers that workspace and keeps `unsafe.json` beside it under
+`crustify/audit/`.
 
 | flag | verb | default | effect |
 |---|---|---|---|
 | `<repo>` | both | — | repository to audit; the crate is its root, or `crustify/rust` |
 | `--json` | `unsafe` | off | print `unsafe.json` to stdout instead of the human summary. The file is written either way |
+| `--name NAME …` | `unsafe` | — | report raw-pointer and dereference sites for named C types or symbols, plus manual `Deref`/`DerefMut` and wrapper-slice sites for types |
 | `--model PROVIDER/MODEL` | `ub` | backend default | e.g. `anthropic/claude-opus-5`, `openai/gpt-5.6`; the prefix selects the backend and is mandatory |
 | `--billing subscription\|api` | `ub` | `subscription` | how the provider CLI authenticates. `api` adds `--bare` (claude) or an env-key provider block (codex) — neither uses a key in the environment without it; a missing key fails at launch |
 | `--timeout MIN` | `ub` | `30` | wall-clock BUDGET for the run. Agents are spawned one after another until it is reached, and are never killed — each finishes on its own, so the run overshoots by however long the last one takes. Each agent reads what the previous wrote. `0` runs exactly one agent |
@@ -110,9 +120,8 @@ sample: the measure is a pure function of the source tree, so two runs agree
 and a diff between them is a change in the crate rather than a change in the
 model's mood. That is what makes a number quotable.
 
-It also runs the same driver as `crustify-cli audit`, so a hand-written wrapper
-and a crustify-generated one are measured by one instrument and their numbers
-compare.
+The rustc driver in this repository is the canonical deterministic instrument,
+so a hand-written wrapper and a crustify-generated one are measured alike.
 
 What it does not do is decide what is worth looking at. That is the judgement
 `ub` exists for, and handing the agent a ranked list would make it in advance,
@@ -213,6 +222,23 @@ The measure covers the code a normal build compiles: `cfg` stripping happens
 before HIR, so an inline `mod tests` puts neither its lines in the denominator
 of a ratio nor its `unsafe` in the numerator.
 
+With `--name`, each matching C type or symbol is one entry under its compiled crate.
+`raw_ptr_sites` covers raw-pointer type declarations in arguments, returns,
+fields and explicitly typed locals. `raw_deref_sites` covers `*p` expressions
+whose pointer targets that type. `deref_impl_sites` and
+`deref_mut_impl_sites` locate manual implementations on structural wrappers
+outside ffibox itself. `slice_ref_sites` and `slice_mut_sites` locate explicit
+`&[Wrapper]` and `&mut [Wrapper]` types plus expressions that materialize them,
+including inferred `slice::from_raw_parts` calls. The raw-pointer scan needs no
+wrapper; the latter four fields do. Resolution is crate-local, and the `crate`
+field makes that boundary explicit.
+
+A symbol resolves by its Rust item name or linked/exported C name. Its
+`raw_ptr_sites` cover raw-pointer declarations in its signature and body; its
+`raw_deref_sites` cover raw dereferences in its body. Calling an external C
+symbol assigns the enclosing wrapper function's corresponding sites to that
+symbol. The four wrapper-specific site lists remain type-only.
+
 The figures that *are* categorical are the ones measuring an obligation the
 seam does not excuse:
 
@@ -233,15 +259,12 @@ library.
 Working end to end. `ub` has run against git2-rs, rust-openssl and
 rust-ffmpeg, each producing an advisory and a set of notes.
 
-- The counts come from the driver vendored in `src/driver/`, which is
-  `crustify-cli`'s `utils/unsafe_metrics` copied verbatim, so `crustify-audit
-  unsafe` and `crustify-cli audit` report the same numbers for the same tree.
-  It is a copy, not a shared crate: an edit made here and not there makes the
-  two disagree while both claim the same metric names.
+- The global counts and named-site scan come from the driver in `src/driver/`.
+  This repository is their source of truth.
 - The driver compiles the crate, which an FFI wrapper often cannot do without
   its system libraries. Then `counts` is `null`, `counts_unavailable` says
-  why, and the seed half still runs — no substitute numbers under the same
-  field names.
+  why, and named entries are unavailable too — no substitute results under the
+  same field names.
 - Finding what is worth investigating is the agent's, not a scanner's. It
   reads the crate, forms its own suspicions and defends them; `unsafe` gives it
   the numbers and nothing else.
