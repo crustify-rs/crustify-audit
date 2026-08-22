@@ -52,6 +52,14 @@ pub fn invoke_ping() {
     fixture_sys::c_ping();
 }
 
+pub fn invoke_closure_touch(
+    arg: *mut fixture_sys::c_thing,
+) -> Option<*mut fixture_sys::c_thing> {
+    Some(arg).map(|local: *mut fixture_sys::c_thing| unsafe {
+        fixture_sys::c_closure_touch(local)
+    })
+}
+
 #[unsafe(export_name = "exported_touch")]
 pub unsafe extern "C" fn rust_touch(
     arg: *mut fixture_sys::c_thing,

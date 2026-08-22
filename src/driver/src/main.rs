@@ -932,6 +932,20 @@ fn enclosing_impl_self(tcx: TyCtxt<'_>, mut did: DefId) -> Option<DefId> {
     None
 }
 
+fn enclosing_fn(tcx: TyCtxt<'_>, mut did: DefId) -> Option<rustc_hir::def_id::LocalDefId> {
+    loop {
+        if matches!(tcx.def_kind(did), DefKind::Fn | DefKind::AssocFn) {
+            return did.as_local();
+        }
+        match tcx.opt_parent(did) {
+            Some(parent) if !matches!(tcx.def_kind(parent), DefKind::Mod | DefKind::ForeignMod) => {
+                did = parent;
+            }
+            _ => return None,
+        }
+    }
+}
+
 /// Classify a body owner's enclosing region, for grouping ffi-call sites:
 /// `trait_impl:<Trait>` (a call inside `impl Trait for T` — e.g. the
 /// `CDropped` / `CLenDropped` wrapper-teardown chokepoints), `inherent_impl`
@@ -1215,14 +1229,19 @@ fn collect_symbol_sites(
         resolved.extend(hits.iter().cloned());
 
         // Include the enclosing wrapper signature for call-resolved symbols.
-        if let Some(decl) = tcx.expect_hir_owner_node(owner).fn_decl() {
-            let mut sites = Vec::new();
-            AnyRawPtrDeclVisitor {
-                tcx,
-                sites: &mut sites,
+        // `hir_body_owners()` also yields closures. Walk through those to the
+        // owning function: a closure DefId owns a body but no item node, while
+        // the wrapper signature still belongs to the symbol call it encloses.
+        if let Some(enclosing) = enclosing_fn(tcx, owner.to_def_id()) {
+            if let Some(decl) = tcx.expect_hir_owner_node(enclosing).fn_decl() {
+                let mut sites = Vec::new();
+                AnyRawPtrDeclVisitor {
+                    tcx,
+                    sites: &mut sites,
+                }
+                .visit_fn_decl(decl);
+                add_symbol_sites(&hits, &sites, raw_ptr);
             }
-            .visit_fn_decl(decl);
-            add_symbol_sites(&hits, &sites, raw_ptr);
         }
 
         let mut ptr_sites = Vec::new();

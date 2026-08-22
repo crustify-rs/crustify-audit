@@ -102,7 +102,7 @@ class NamedSeedTests(unittest.TestCase):
         self.assertEqual(entry["crate"], "fixture")
         self.assertEqual(entry["name"], "c_thing")
         self.assertEqual(
-            sum(site["count"] for site in entry["raw_ptr_sites"]), 9)
+            sum(site["count"] for site in entry["raw_ptr_sites"]), 12)
         self.assertEqual(
             sum(site["count"] for site in entry["raw_deref_sites"]), 2)
         self.assertEqual(
@@ -137,6 +137,15 @@ class NamedSeedTests(unittest.TestCase):
             1)
         self.assertEqual(by_name["c_ping"]["raw_ptr_sites"], [])
         self.assertEqual(by_name["c_ping"]["raw_deref_sites"], [])
+
+    def test_driver_seeds_a_symbol_called_inside_a_closure(self):
+        fixture = Path(__file__).parent / "fixtures" / "raw_sites"
+        _counts, entries = measure(fixture, names=["c_closure_touch"])
+        self.assertEqual(len(entries), 1)
+        entry = entries[0]
+        self.assertEqual(entry["name"], "c_closure_touch")
+        self.assertGreaterEqual(
+            sum(site["count"] for site in entry["raw_ptr_sites"]), 1)
 
 
 if __name__ == "__main__":
