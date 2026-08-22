@@ -43,6 +43,10 @@ Python >= 3.13. `pip install -e .` puts `crustify-audit` on PATH; without an
 install, `PYTHONPATH=src python3 -m crustify_audit.cli` takes the same
 arguments.
 
+`SKILL.md` is the generic agent-facing router for this repository. It exposes
+both deterministic safety measurement and agentic UB review without assuming
+Crustify or any other orchestration harness.
+
 ```sh
 crustify-audit <repo> unsafe [--json] [--name NAME …]
 crustify-audit <repo> ub     [--model PROVIDER/MODEL] [--billing B] [--timeout MIN]

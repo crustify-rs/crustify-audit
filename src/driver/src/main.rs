@@ -273,8 +273,8 @@ fn is_declared_wrapper(tcx: TyCtxt<'_>, did: DefId) -> bool {
 ///   * a `#[repr(C)]` ADT by value -- a LAYOUT newtype over the C object.
 ///
 /// This is what a wrapper IS, in any crate. Keying on `CCell` measured what an
-/// author DECLARED, which cannot see a hand-written wrapper (`principles.md`
-/// requires hand-writing them for lifetime-carrying and generic cases) and
+/// author DECLARED, which cannot see a hand-written wrapper (the translator
+/// playbook permits them for lifetime-carrying and generic cases) and
 /// which ties the audit to ffibox. Every `CCell` wrapper satisfies the
 /// structural test by construction -- ffibox requires `#[repr(transparent)]`
 /// over `CType<Self::C>` -- so the structural set SUBSUMES the declared one,
