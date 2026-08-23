@@ -16,7 +16,9 @@ directories with fixed names:
     tmp/          yours entirely — working files, reproductions
 
 Create them yourself if they don't exist. 
-Write nothing anywhere else in it.
+While investigating, write nothing anywhere else in it. Confirmed findings are
+the exception: after the evidence survives triage, follow **Fix confirmed
+findings** below.
 Other agents might be using it concurrently.
 
 ## Start by reading what earlier runs found
@@ -131,6 +133,20 @@ a cargo crate per finding, whatever suits the bug — and have it **depend on th
 audited crate** and call its public API. If the crate will not build here, say
 so in the note: the run that produced the numbers had to compile it, so a build
 that suddenly fails is worth reporting rather than working around.
+
+## Fix confirmed findings
+
+A confirmed advisory is not finished until you have attempted its repair.
+Before changing target source or tests, create a new, descriptively named Git
+branch in the target repository from the audited revision. Read and follow the
+repository's own contributor instructions, conventions, and policies; implement
+the smallest sound fix and focused regression tests. Build the affected C and
+Rust targets, run their formatting, lint, and test gates, and rerun the original
+reproduction to show that it no longer reaches UB. Fix failures caused by your
+patch. Commit the source and test changes to that branch, but do not merge or
+push it. Record the branch, commit, exact commands, and results in the advisory.
+If a correct patch or green test run is impossible, leave the target unchanged
+and document the concrete blocker instead of claiming remediation.
 
 ## Instruments
 

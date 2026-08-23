@@ -19,10 +19,11 @@ Dropped, because crustify-audit is one agent over one workspace:
 
   * the stage/tier/output class hierarchy. There is one role, so there is one
     class and no ``SKILLS`` tuple to vary.
-  * worktree isolation. The agent starts in the audited crate and is told to
-    write only under its artifact root. A worktree would buy real containment
-    and cost a checkout per run; the trade is deliberate and the prompt carries
-    the rule.
+  * worktree isolation. The agent starts in the audited crate. Investigation
+    artifacts stay under the audit root; once a finding is confirmed, the agent
+    creates a target branch before making the source and regression-test patch.
+    A worktree would buy real containment and cost a checkout per run; the trade
+    is deliberate and the prompt carries the rule.
   * the DAG, the scope sets, the wave scheduler. There is no ordering problem:
     the agent decides what to look at.
 
@@ -59,7 +60,8 @@ class AuditAgent:
     The agent is handed the workspace path and nothing else; it derives the
     artifact root from it and runs with `tmp/` as its working directory. It
     leaves one lead note per candidate it investigated and one advisory per bug
-    it actually crashed. It never edits the audited crate.
+    it actually crashed. It edits target source only on a new branch and only
+    to remediate a confirmed finding.
 
     Runs ACCUMULATE. The agent reads what earlier runs left in ``crustify/audit/advisories/``
     and ``crustify/audit/notes/`` before starting, so a second run extends the record instead
@@ -199,10 +201,12 @@ class AuditAgent:
             "reachable from safe code.\n\n"
             "A finding you cannot demonstrate is a hypothesis. Say which you "
             "are reporting.\n\n"
-            "HARD RULE. Inside the audited workspace you may write ONLY under "
-            "its `crustify/audit/` directory -- your notes and advisories belong "
-            "there and nowhere else. Its source, tests and build files are "
-            "read-only to you. Your scratch directory is yours entirely."
+            "HARD RULE. During investigation, inside the audited workspace you "
+            "may write ONLY under its `crustify/audit/` directory -- your notes, "
+            "advisories, and scratch work belong there. You may edit target "
+            "source, tests, and build files only after confirming a finding and "
+            "only after creating the dedicated target Git branch required by "
+            "the prompt."
         )
 
     # ------------------------------------------------------- instruments
@@ -221,4 +225,3 @@ class AuditAgent:
     def miri_available(cls) -> bool:
         return shutil.which("cargo") is not None and cls._ok(
             ["cargo", "+nightly", "miri", "--version"])
-
