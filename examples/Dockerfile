@@ -127,6 +127,13 @@ ENV HOME=/work \
     CARGO_HOME=/work/.cargo
 RUN mkdir -p /work /target
 
+# /target is a bind mount owned by the HOST user while the container runs as
+# root, so git rejects it for "dubious ownership" -- which breaks recording the
+# audited revision and every worktree the patch objective creates. --system,
+# not --global: HOME is the named volume, and a gitconfig written under it at
+# build time is masked whenever that volume already exists.
+RUN git config --system --add safe.directory '*'
+
 # `crustify-audit` is the CLI the orchestrator spawns auditors with;
 # `crustify-audit-orchestrator` is what the container runs, off the CRUSTIFY_*
 # env.
