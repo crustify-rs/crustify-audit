@@ -20,9 +20,9 @@ Optional answers may be left unresolved for the orchestrator to decide.
    - Answer: `30 minutes`
 5. **Which backend and model should the auditors use? The same one as the
    orchestrator?**
-   - Answer: `opus-5`
+   - Answer: `gpt-5.6-sol`
 6. **Which billing mode should agentic stages use?**
-   - Answer: `subscription`
+   - Answer: `api`
 7. **Which instruments should the auditors hunt with?**
    - Answer: `borrowsanitizer`
 
