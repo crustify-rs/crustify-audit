@@ -147,19 +147,6 @@ RUN printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' \
       '    echo "no checkout at /opt/crustify-audit — mount this repo there" >&2' \
       '    exit 2; }' \
       'target=/target' \
-      '[ -f "$target/Cargo.toml" ] || [ -f "$target/crustify/rust/Cargo.toml" ] || {' \
-      '    echo "no crate at $target — mount the repository to audit there," >&2' \
-      '    echo "e.g. -v /path/to/repo:/target. Looked for Cargo.toml at the" >&2' \
-      '    echo "root and at crustify/rust/." >&2; exit 2; }' \
-      '# Without git the run cannot record WHICH revision it audited.' \
-      'if [ -d "$target/.git" ]; then' \
-      '    rev="$(git -C "$target" rev-parse --abbrev-ref HEAD) @ $(git -C "$target" rev-parse --short HEAD)"' \
-      '    echo "[crustify-audit] target $rev"' \
-      'else' \
-      '    rev="not a git checkout"' \
-      '    echo "[crustify-audit] warning: $target is not a git checkout, so the" >&2' \
-      '    echo "audited revision cannot be recorded" >&2' \
-      'fi' \
       '# The deterministic scan needs no agent and no auth: run it and stop.' \
       'if [ "${CRUSTIFY_VERB}" = "unsafe" ]; then' \
       '    exec crustify-audit "$target" unsafe "$@"' \
@@ -213,8 +200,9 @@ RUN printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' \
       '' \
       'Container context, for the questions you are about to ask:' \
       '' \
-      '- The target checkout is mounted at /target: $rev. It is the only one' \
-      '  available, so confirm it rather than asking where it is.' \
+      '- The target checkout is mounted at /target. It is the only one' \
+      '  available, so confirm it rather than asking where it is. Resolve' \
+      '  and record the revision you audit yourself, with git in /target.' \
       '- Defaults you may propose: --model' \
       '  $auditor_provider/$CRUSTIFY_MODEL, --billing' \
       '  $CRUSTIFY_BILLING, --timeout $CRUSTIFY_TIMEOUT (minutes per auditor).' \
