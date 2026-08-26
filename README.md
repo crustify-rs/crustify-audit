@@ -1,277 +1,142 @@
 # crustify-audit
 
-Find soundness bugs and safety trade-offs in Rust code that wraps C.
+Audit Rust repositories—especially wrappers over C—for unsafe surface area and
+undefined behavior reachable from safe code.
 
-Two halves, and the split is the point:
-
-| | | |
+| command | kind | result |
 |---|---|---|
-| `unsafe` | **deterministic** | a rustc driver over HIR and typeck: how much unsafety the crate has and where its boundary sits. No LLM, no network. Same tree, same bytes. |
-| `ub` | **agentic** | one agent reading the crate to find what is worth looking at, hunting undefined behaviour reachable from safe code, picking its own instruments and authoring the advisories. |
+| `unsafe` | deterministic rustc analysis | unsafe and raw-pointer metrics |
+| `ub` | agentic audit | investigated leads and reproducible advisories |
 
-Separate verbs, not one command with a flag, so a caller always knows whether
-the answer in front of them is reproducible.
+## Quick start
 
-```sh
-crustify-audit /path/to/crate unsafe      # deterministic, standalone
-crustify-audit /path/to/crate ub          # agentic; runs the pass itself
-```
-
-Artifacts land in `<repo>/crustify/audit/` — `advisories/`, `notes/`, `tmp/`,
-`logs/`, `unsafe.json`. Under the directory crustify-cli uses, so
-auditing a campaign target puts the audit beside the campaign, in its own
-subdirectory so the two tools' artifacts stay separable.
-
-Campaigns ignore `audit/unsafe.json` in their canonical `crustify/.gitignore`.
-For an ordinary repository, `unsafe` maintains
-`crustify/audit/.gitignore` with `/unsafe.json`. Notes and advisories remain
-trackable in either layout.
-
-The agent authors the advisory itself, in prose, because the judgement it is
-there to exercise is the part a filled-in template would flatten.
-
-The subject is an **ordinary repository**. The crate is its root, or
-`crustify/rust` if it has been through a campaign — nothing else is required:
-no CodeQL database, no scope config, no campaign artifacts. That is what makes
-this a separate binary from `crustify-cli` rather than another subcommand,
-since the campaign binaries mandate `<repo_root> <target>` and refuse to run
-without them.
-
-## Usage
-
-Python >= 3.13. `pip install -e .` puts `crustify-audit` on PATH; without an
-install, `PYTHONPATH=src python3 -m crustify_audit.cli` takes the same
-arguments.
-
-`SKILL.md` is the generic agent-facing router for this repository. It exposes
-both deterministic safety measurement and agentic UB review without assuming
-Crustify or any other orchestration harness.
+Requires Python 3.13 or newer:
 
 ```sh
-crustify-audit <repo> unsafe [--json] [--name NAME …]
-crustify-audit <repo> ub     [--model PROVIDER/MODEL] [--billing B] [--timeout MIN]
+pip install -e .
+
+crustify-audit /path/to/repo unsafe
+crustify-audit /path/to/repo ub --model anthropic/claude-opus-5
 ```
 
-For a Crustify campaign, pass the repository root, not `crustify/rust`; the
-tool discovers that workspace and keeps `unsafe.json` beside it under
-`crustify/audit/`.
+Pass the repository root. The audited Cargo workspace is the root when it has a
+`Cargo.toml`; otherwise it is `crustify/rust/` for a Crustify campaign.
 
-| flag | verb | default | effect |
-|---|---|---|---|
-| `<repo>` | both | — | repository to audit; the crate is its root, or `crustify/rust` |
-| `--json` | `unsafe` | off | print `unsafe.json` to stdout instead of the human summary. The file is written either way |
-| `--name NAME …` | `unsafe` | — | report raw-pointer and dereference sites for named C types or symbols, plus manual `Deref`/`DerefMut` and wrapper-slice sites for types |
-| `--model PROVIDER/MODEL` | `ub` | backend default | e.g. `anthropic/claude-opus-5`, `openai/gpt-5.6`; the prefix selects the backend and is mandatory |
-| `--billing subscription\|api` | `ub` | `subscription` | how the provider CLI authenticates. `api` adds `--bare` (claude) or an env-key provider block (codex) — neither uses a key in the environment without it; a missing key fails at launch |
-| `--timeout MIN` | `ub` | `30` | wall-clock BUDGET for the run. Agents are spawned one after another until it is reached, and are never killed — each finishes on its own, so the run overshoots by however long the last one takes. Each agent reads what the previous wrote. `0` runs exactly one agent |
+`unsafe` requires a nightly toolchain with `rustc-dev` and `llvm-tools`, plus a
+workspace that compiles. `ub` requires the selected Claude or Codex CLI and the
+instrumentation appropriate to each finding. It warns when Miri or
+BorrowSanitizer is unavailable.
 
-`unsafe` needs a nightly toolchain with `rustc-dev` and `llvm-tools`, and the
-crate to compile; without either there are no counts and the reason is
-recorded. `ub` needs `cargo +nightly miri` to check its own reproductions, and
-warns without it.
+## Output
+
+Every run uses `<repo>/crustify/audit/`:
+
+```text
+unsafe.json        deterministic scan output
+advisories/        confirmed bugs and their reproducers
+leads/             every investigated candidate, including cleared ones
+scratch/           disposable experiments
+logs/              agent logs and usage records
+```
+
+An advisory requires a safe reproducer that depends on the audited crate, calls
+its public API without writing `unsafe`, and triggers Miri, ASan/UBSan, or
+BorrowSanitizer. Anything short of that is a lead.
+
+Runs accumulate. Auditors read existing advisories and leads before starting,
+so later runs extend the record instead of repeating completed investigations.
+
+## CLI
+
+```text
+crustify-audit REPO unsafe [--json] [--name NAME ...]
+crustify-audit REPO ub [--objective audit|audit+patch|patch]
+                       [--workset PATH ...]
+                       [--instruments miri|asan/ubsan|bsan ...]
+                       [--model PROVIDER/MODEL]
+                       [--billing subscription|api]
+                       [--timeout MINUTES]
+```
+
+- `unsafe --json` prints the document written to `unsafe.json`.
+- `unsafe --name` adds source sites for selected C types or symbols.
+- `ub --workset` confines an auditor to specified files; omit it for the whole
+  crate.
+- `ub --instruments` constrains the hunt and advisory evidence; omit it to use
+  Miri, ASan/UBSan, and BorrowSanitizer. Before spending, the command prints the
+  exact selected instruments, their bug classes, and their reach limitations.
+- `ub --timeout` is a wall-clock budget, not a kill deadline. The current agent
+  finishes even when that overshoots the budget; `0` runs one agent.
+- `audit` never edits target source. `audit+patch` and `patch` develop repairs
+  in Git worktrees.
+
+Run `crustify-audit --help` or a subcommand's `--help` for complete flag
+semantics.
+
+### Instrument scopes
+
+| selection | bug classes the auditor hunts |
+|---|---|
+| `miri` | Rust-side bounds and lifetime errors, uninitialized or invalid values, alignment and intrinsic violations, aliasing under Stacked/Tree Borrows, and data races |
+| `asan/ubsan` | native bounds errors, use-after-free/return/scope and invalid frees, pointer/alignment UB, integer/division/shift UB, and invalid C/C++ runtime values |
+| `bsan` | Tree Borrows aliasing across Rust and foreign code, including conflicting foreign-pointer writes and pointers invalidated by reborrows |
+
+These are execution-based scopes, not promises of exhaustive detection. Miri
+usually cannot execute foreign code; ASan/UBSan require the relevant native
+code and final executable to be instrumented; BorrowSanitizer specifically
+checks Rust aliasing rules. The same definitions are injected into each auditor
+prompt, so CLI selection, displayed plan, and hunt scope cannot drift.
 
 ## Container
 
-The run starts with the container: `docker run` *is* the run, and it ends when
-the budget is spent.
+The container starts an orchestrator that resolves the run plan and launches
+auditors against the checkout mounted at `/target`.
 
 ```sh
-docker build -t crustify-audit run/
-mkdir -p ~/.claude-audit && cp ~/.claude/.credentials.json ~/.claude-audit/
+docker build -t crustify-audit examples/
 
-docker run -d --name audit-ippcp \
-    -v "$PWD:/opt/crustify-audit" \
-    -v /path/to/target-repo:/target \
-    -v ~/.claude-audit:/work/.claude \
-    -v audit-ippcp-work:/work \
-    crustify-audit
-
-docker logs -f audit-ippcp
+docker run --rm -it --name audit-target \
+  -e ANTHROPIC_API_KEY \
+  -e CRUSTIFY_BACKEND=claude \
+  -e CRUSTIFY_MODEL=claude-opus-5 \
+  -v "$PWD:/opt/crustify-audit" \
+  -v /path/to/target-repo:/target \
+  -v audit-target-work:/work \
+  crustify-audit
 ```
 
-| mount | mode | holds |
+For Codex, use `CRUSTIFY_BACKEND=codex`, pass the model ID exactly as Codex
+expects it, and provide `OPENAI_API_KEY`. The model is likewise passed verbatim
+to Claude.
+
+To pre-fill a run, complete [`examples/TASK.md`](examples/TASK.md) and mount it:
+
+```sh
+-v /host/campaign/TASK.md:/campaign/TASK.md:ro
+```
+
+The task is appended only when that mount exists. Without it, the orchestrator
+asks for mandatory decisions. A headless run therefore needs a complete task.
+
+| variable | values | default |
 |---|---|---|
-| `/target` | bind, read-write | the repository to audit, on whatever branch the host has checked out. The agent's `crustify/audit/` artifacts appear in that working tree as the run produces them |
-| `/opt/crustify-audit` | bind, read-write | this checkout; agents may fix the tool, so give them a reviewable branch |
-| `/work/.claude` | bind, read-write | a **copy** of `~/.claude/.credentials.json`, for `subscription` billing. Not your real `~/.claude`, which holds every project's history, and not the file alone — the CLI refreshes the token by rename, and a rename across a single-file bind mount fails. Re-copy when a run fails to authenticate. Codex is `/work/.codex` with `auth.json`. With `--billing api` there is no credential mount: pass `-e ANTHROPIC_API_KEY` instead |
-| `/work` | named volume, and `HOME` | the C library the agent builds, the cargo registry, the provider CLI's config at `/work/.claude`. Not the audit artifacts — those are in the target checkout. The Rust toolchain, miri, cmake and nasm need no volume; they are in the image layer |
+| `CRUSTIFY_BACKEND` | `claude`, `codex` | `claude` |
+| `CRUSTIFY_MODEL` | backend-specific model ID | `claude-opus-5` |
+| `CRUSTIFY_BILLING` | `api`, `subscription` | `api` |
+| `CRUSTIFY_HEADLESS` | `0`, `1` | `0` |
+| `CRUSTIFY_TIMEOUT` | minutes per auditor; `0` runs one | `60` |
+| `CRUSTIFY_EFFORT` | Codex reasoning effort | `high` |
+| `CRUSTIFY_VERB` | `orchestrate`, `unsafe` | `orchestrate` |
 
-| var | values | default |
-|---|---|---|
-| `CRUSTIFY_VERB` | `ub`, `unsafe` | `ub` |
-| `CRUSTIFY_MODEL` | `<provider>/<model>` | `anthropic/claude-opus-5` |
-| `CRUSTIFY_BILLING` | `subscription`, `api` | `subscription` |
-| `CRUSTIFY_TIMEOUT` | minutes, `0` for one agent | `60` |
+`api` uses the matching environment key. `subscription` uses credentials saved
+under `/work`, which is also the persistent Cargo/build cache. Set
+`CRUSTIFY_VERB=unsafe` to run only the deterministic scan, without an agent or
+authentication.
 
-There is no ref to pass: the container audits the checkout it is given, so
-choosing a branch is `git checkout` on the host, where you can see the result.
-Runs accumulate against that tree — a second one reads the advisories and notes
-the first left.
+## Reference
 
-Auth is checked before the agent starts, for both billing modes: a missing
-token or key exits 2 naming the fix, rather than letting the CLI issue no
-request and exit 0 as though the hunt found nothing.
-
-The image carries cmake, ninja, nasm, yasm, autotools and clang, and nothing
-target-specific. The C library the crate wraps, a campaign tree's `ffibox`,
-anything else it needs — the agent installs itself, which `ub` requires anyway,
-since an advisory has to link the audited crate.
-
-## Why the deterministic half exists
-
-Not because an agent could not count. Because a count it produced would be a
-sample: the measure is a pure function of the source tree, so two runs agree
-and a diff between them is a change in the crate rather than a change in the
-model's mood. That is what makes a number quotable.
-
-The rustc driver in this repository is the canonical deterministic instrument,
-so a hand-written wrapper and a crustify-generated one are measured alike.
-
-What it does not do is decide what is worth looking at. That is the judgement
-`ub` exists for, and handing the agent a ranked list would make it in advance,
-on evidence a syntax pass cannot weigh.
-
-## What the agent looks for
-
-The shapes that are usually soundness bugs in C wrappers:
-
-1. **Aliasing** — a `&mut T` and a `&T` to the same object live at once, usually
-   laundered through `transmute_copy`.
-2. **Lending iterators** — `Item` borrowing the iterator's `'a` rather than
-   `&mut self`, so `collect()` yields several `&mut` to one object.
-3. **Unvalidated integer→enum transmutes** of values that came from C.
-4. **Lifetimes decoupled** from the borrow they came from.
-5. **`Deref`/`DerefMut` exposure** that `mem::swap` can break invariants through.
-6. **`Send`/`Sync` asserted** over thread-affine C state.
-
-Resolving these **transitively** is load-bearing. The bug this tool was built
-after holds its exclusive reference directly and reaches its shared one a level
-down through another struct; looking only at direct fields misses it entirely.
-
-## Triage
-
-**An empty `crustify/audit/advisories/` means nothing was demonstrated.** The agent
-writes an advisory only when it actually crashed something — one file per bug,
-named after the bug. `crustify/audit/notes/` holds one note per lead it chased,
-whether or not that lead panned out, so a clean audit is distinguishable from an
-agent that died halfway.
-
-Runs accumulate: the agent reads both directories before starting, so a second
-run extends the record — skipping a cleared lead, adding a route to an existing
-advisory — instead of paying to re-derive it.
-
-For each advisory, two questions:
-
-| | who answers | if no |
-|---|---|---|
-| 1. Does the reproduction actually fail? | `cd` into it and run `cargo +nightly miri run` | discard |
-| 2. Does the reproduction match the real code? | read it against the source line it cites | discard |
-
-Survives both → real. Both are a couple of minutes, and you only reach them
-when an advisory exists at all.
-
-Question 2 rarely bites, because an advisory requires the reproduction to
-depend on the audited crate and call its real public API — there is no fidelity
-question when the crash happened in their code. A reduction that merely mirrors
-the crate's types is a **note**, not an advisory: it shows that a program
-nobody wrote is unsound, and the claim that it models the real one is the one
-thing a reader cannot check.
-
-The cost is that an instrument which cannot run the real crate cannot produce
-an advisory. Miri stops at every `extern "C"` call, so Rust-side aliasing in a
-wrapper usually ends as a note — deliberately, since the alternative is
-advisories nobody can verify.
-
-## Instruments
-
-Miri and the sanitizers answer different questions, and the agent picks:
-
-| | role | reaches | needs |
-|---|---|---|---|
-| **Miri** | verification — rules on a reduction you already have | Rust-side UB: aliasing under Stacked *and* Tree Borrows, invalid values, uninit, alignment | nothing built |
-| **ASan / LSan** | discovery — run real code, see what fires | use-after-free, double-free, overflow, leaks **across** the FFI seam | a working build **and** a workload |
-| **UBSan** | discovery | integer overflow, misalignment, bad shifts and casts *inside* the C library | the C dep rebuilt with `-fsanitize=undefined` |
-| **TSan** | discovery | data races across the boundary | build + concurrent tests |
-
-The split matters because **Miri cannot execute C**. It stops at every
-`extern "C"` call — which, for a wrapper crate, is where the interesting
-behaviour lives. `-Zmiri-native-lib` partially bridges it but is experimental,
-Unix-only and fragile. Sanitizers are how you see the other side of the seam.
-
-The cost is that sanitizers need the crate to *build*, which for an FFI wrapper
-means its system dependencies must be present — often the reason a crate is
-worth auditing is the reason you cannot build it. And they only report code that
-runs, so they need the crate's own tests as a workload. `unsafe` deliberately
-needs no build at all; `ub` uses whatever happens to be available and is asked
-to say in the advisory what it could not check.
-
-## Where the line sits
-
-The harness hands the agent the repository path and starts it. Everything after that — what to investigate, how to reduce it, what a
-reproduction looks like, how to structure the advisory — is the agent's.
-
-The prompt says what a good report looks like and why Miri under both borrow
-models is worth more than Miri under one. It does not hand over a form to fill
-in. A schema is a poor substitute for telling an author what makes a report
-land, and the parts of this job worth paying a model for are exactly the parts a
-schema cannot express.
-
-## What the numbers mean, and don't
-
-`unsafe` reports unsafe-block counts because they are context, **not a quality
-score**. A wrapper over C must contain unsafe, and folding 600 small audited
-blocks into 200 large ones improves the number while making the crate worse.
-
-The measure covers the code a normal build compiles: `cfg` stripping happens
-before HIR, so an inline `mod tests` puts neither its lines in the denominator
-of a ratio nor its `unsafe` in the numerator.
-
-With `--name`, each matching C type or symbol is one entry under its compiled crate.
-`raw_ptr_sites` covers raw-pointer type declarations in arguments, returns,
-fields and explicitly typed locals. `raw_deref_sites` covers `*p` expressions
-whose pointer targets that type. `deref_impl_sites` and
-`deref_mut_impl_sites` locate manual implementations on structural wrappers
-outside ffibox itself. `slice_ref_sites` and `slice_mut_sites` locate explicit
-`&[Wrapper]` and `&mut [Wrapper]` types plus expressions that materialize them,
-including inferred `slice::from_raw_parts` calls. The raw-pointer scan needs no
-wrapper; the latter four fields do. Resolution is crate-local, and the `crate`
-field makes that boundary explicit.
-
-A symbol resolves by its Rust item name or linked/exported C name. Its
-`raw_ptr_sites` cover raw-pointer declarations in its signature and body; its
-`raw_deref_sites` cover raw dereferences in its body. Calling an external C
-symbol assigns the enclosing wrapper function's corresponding sites to that
-symbol. The four wrapper-specific site lists remain type-only.
-
-The figures that *are* categorical are the ones measuring an obligation the
-seam does not excuse:
-
-- `unsafe_fns` minus `unsafe_fns_seam` — an `unsafe fn` outside a conversion
-  routine or the C-ABI gateway pushes its invariant onto every caller, and
-  `unsafe_fns_pub` says how many leave the crate
-- `raw_ptr_args + raw_ptr_rets` minus `raw_ptr_seam` — each remaining position
-  is a lifetime the type system is not tracking
-- `ref_to_type_wrapper` — a reference over memory C writes through a pointer it
-  retains. Target 0, and **vacuously** 0 wherever `wrapper_newtypes` is 0, so
-  read the pair
-
-Those are the comparisons worth making between two wrappers over the same C
-library.
-
-## Status
-
-Working end to end. `ub` has run against git2-rs, rust-openssl and
-rust-ffmpeg, each producing an advisory and a set of notes.
-
-- The global counts and named-site scan come from the driver in `src/driver/`.
-  This repository is their source of truth.
-- The driver compiles the crate, which an FFI wrapper often cannot do without
-  its system libraries. Then `counts` is `null`, `counts_unavailable` says
-  why, and named entries are unavailable too — no substitute results under the
-  same field names.
-- Finding what is worth investigating is the agent's, not a scanner's. It
-  reads the crate, forms its own suspicions and defends them; `unsafe` gives it
-  the numbers and nothing else.
-- One agent, by design. Splitting the hunt across parallel agents is worth it
-  once a single one is demonstrably good.
-- The agent both produces findings and checks them.
+- [Deterministic output and named-site semantics](docs/unsafe-output.md)
+- [Task questionnaire](examples/TASK.md)
+- [Example results and report format](examples/results.md)
+- [`ub` auditor prompt](src/crustify_audit/prompts/ub.md)
+- [Orchestrator prompt](src/crustify_audit/prompts/orchestrator.md)

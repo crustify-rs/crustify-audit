@@ -40,10 +40,17 @@ class AgentLog:
 
 
 @contextlib.contextmanager
-def open_agent_log(logs_dir: Path, stage: str):
+def open_agent_log(logs_dir: Path, stage: str, tag: str | None = None):
+    """Open a transcript. `tag` distinguishes AGENTS RUNNING CONCURRENTLY.
+
+    The stamp is second-resolution, so two agents spawned in the same second
+    would otherwise write the same file and one would lose its transcript
+    entirely.
+    """
     logs_dir.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    log = AgentLog(logs_dir / f"{stage}-{stamp}")
+    name = f"{stage}-{stamp}" + (f"-{tag}" if tag else "")
+    log = AgentLog(logs_dir / name)
     log._fh = log.transcript.open("w")
     try:
         yield log

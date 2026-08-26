@@ -42,6 +42,9 @@ import time
 
 import shutil
 import subprocess
+import tempfile
+from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 from crustify_audit.agentlog import AgentLog, open_agent_log
@@ -54,6 +57,65 @@ _MIN_AGENT_SECONDS = 60
 _PKG_ROOT = Path(__file__).resolve().parent.parent
 
 
+@dataclass(frozen=True)
+class InstrumentSpec:
+    """One selectable verifier and the exact bug scope it gives an auditor."""
+
+    label: str
+    bug_classes: tuple[str, ...]
+    reach: str
+
+
+# This is the source of truth for both the CLI choices and the auditor prompt.
+# Keep the classes phrased as things an instrument can actually demonstrate,
+# not a general unsafe-Rust taxonomy: selecting an instrument constrains which
+# candidates the auditor is allowed to spend its hunt on.
+INSTRUMENT_SPECS = {
+    "miri": InstrumentSpec(
+        label="Miri",
+        bug_classes=(
+            "Rust-side out-of-bounds access, use-after-free, and invalid pointer use",
+            "reads of uninitialized data and invalid values such as bad enum discriminants",
+            "misaligned accesses and violated intrinsic preconditions",
+            "Rust reference aliasing violations under Stacked Borrows and Tree Borrows",
+            "data races in Rust code",
+        ),
+        reach=(
+            "Code Miri can interpret. Most foreign calls are unsupported, so do not "
+            "claim that a Rust-only model demonstrates behavior across the C boundary."
+        ),
+    ),
+    "asan/ubsan": InstrumentSpec(
+        label="AddressSanitizer + UndefinedBehaviorSanitizer (ASan/UBSan)",
+        bug_classes=(
+            "heap, stack, or global out-of-bounds access and buffer overflow",
+            "use-after-free, use-after-return/scope, double-free, and invalid free",
+            "null or misaligned pointer dereference and invalid object-size or pointer arithmetic",
+            "signed integer overflow, division overflow, divide by zero, and invalid shifts",
+            "invalid C/C++ enum, bool, and related runtime values covered by UBSan",
+        ),
+        reach=(
+            "Executed native code only. Rebuild the relevant Rust and C/C++ code with "
+            "the sanitizers and link their runtimes into the final reproducer."
+        ),
+    ),
+    "bsan": InstrumentSpec(
+        label="BorrowSanitizer (BSan)",
+        bug_classes=(
+            "Tree Borrows aliasing violations across Rust and foreign code",
+            "writes through raw or foreign pointers that conflict with live Rust references",
+            "access through pointers invalidated by Rust reborrows or exclusivity changes",
+        ),
+        reach=(
+            "Executed Rust and LLVM-supported foreign code. It checks Rust aliasing "
+            "rules; it is not a replacement for general memory-error sanitizers."
+        ),
+    ),
+}
+
+INSTRUMENTS = tuple(INSTRUMENT_SPECS)
+
+
 class AuditAgent:
     """One UB hunt over one workspace.
 
@@ -64,7 +126,7 @@ class AuditAgent:
     to remediate a confirmed finding.
 
     Runs ACCUMULATE. The agent reads what earlier runs left in ``crustify/audit/advisories/``
-    and ``crustify/audit/notes/`` before starting, so a second run extends the record instead
+    and ``crustify/audit/leads/`` before starting, so a second run extends the record instead
     of re-deriving it.
     """
 
@@ -81,10 +143,28 @@ class AuditAgent:
         model: str | None = None,
         timeout_s: int | None = None,
         billing: str = "subscription",
+        objective: str = "audit",
+        workset: "Sequence[str] | None" = None,
+        instruments: "Sequence[str] | None" = None,
+        tag: str | None = None,
     ) -> None:
         self.layout = layout
         self.model = model or self.model
         self.timeout_s = timeout_s
+        #: `audit` | `audit+patch` | `patch`. Only the patching objectives may
+        #: touch target source, and only inside a worktree -- which is what
+        #: keeps concurrent agents off each other's checkout.
+        self.objective = objective
+        #: Files this agent confines its hunt to. Empty means the whole crate,
+        #: which is the single-agent case. A workset is what makes several
+        #: agents on one target additive rather than duplicative.
+        self.workset = tuple(workset or ())
+        self.instruments = tuple(dict.fromkeys(instruments or INSTRUMENTS))
+        unknown = set(self.instruments) - set(INSTRUMENTS)
+        if unknown:
+            raise ValueError(f"unknown instruments: {', '.join(sorted(unknown))}")
+        #: Distinguishes concurrent agents in the log directory.
+        self.tag = tag
         #: `subscription` | `api` — see the backends, which is where it changes
         #: the argv rather than the environment.
         self.billing = billing
@@ -95,7 +175,7 @@ class AuditAgent:
         """Drive the hunt until the deadline. Returns (advisories, leads).
 
         THERE IS NO DONE SIGNAL AND NO SKIP, deliberately. Runs accumulate:
-        each reads what earlier ones left in `crustify/audit/advisories/` and `crustify/audit/notes/` and adds
+        each reads what earlier ones left in `crustify/audit/advisories/` and `crustify/audit/leads/` and adds
         to them. Skipping when an artifact exists would make the second run --
         the one that builds on the first -- impossible. The cost is that `ub`
         always spends, so the CLI reports what is already there before starting.
@@ -124,7 +204,7 @@ class AuditAgent:
         spawned, short = 0, 0
         while True:
             was, t0 = self.counts(), time.monotonic()
-            with open_agent_log(self.layout.logs, self.stage) as log:
+            with open_agent_log(self.layout.logs, self.stage, self.tag) as log:
                 backend.run(
                     name=self.name,
                     model=route.model,
@@ -141,11 +221,11 @@ class AuditAgent:
                 )
             spawned += 1
             took, now = time.monotonic() - t0, time.monotonic()
-            adv, notes = self.counts()
+            adv, leads = self.counts()
             left = int(deadline - now) if deadline else 0
             print(f"[crustify-audit] agent {spawned} ended after "
                   f"{took / 60:.1f}m — advisories {adv} (+{adv - was[0]}), "
-                  f"notes {notes} (+{notes - was[1]})"
+                  f"leads {leads} (+{leads - was[1]})"
                   + (f", {left // 60}m of budget left" if deadline else ""))
             if deadline is None or now >= deadline:
                 break
@@ -168,7 +248,7 @@ class AuditAgent:
         """(advisories, leads) on disk. The harness counts files; it does not
         parse them."""
         n = lambda d: len(list(d.glob("*.md"))) if d.is_dir() else 0
-        return n(self.layout.advisories), n(self.layout.notes)
+        return n(self.layout.advisories), n(self.layout.leads)
 
     # -------------------------------------------------------------- prompt
 
@@ -187,7 +267,34 @@ class AuditAgent:
         Every injected fact is a place the prompt and the layout can drift
         apart, and one more thing for the agent to trust instead of check.
         """
-        return {"workspace": str(self.layout.repo)}
+        return {"workspace": str(self.layout.repo),
+                "objective": self.objective,
+                "workset": self._workset_text(),
+                "instruments": self._instruments_text()}
+
+    def _instruments_text(self) -> str:
+        """Selected instruments, bug classes, and limits injected into the prompt."""
+        sections = []
+        for name in self.instruments:
+            spec = INSTRUMENT_SPECS[name]
+            classes = "\n".join(f"  - {bug_class}" for bug_class in spec.bug_classes)
+            sections.append(
+                f"### {spec.label} (`{name}`)\n\n"
+                f"Hunt for these bug classes:\n\n{classes}\n\n"
+                f"Reach and limitation: {spec.reach}"
+            )
+        return "\n\n".join(sections)
+
+    def _workset_text(self) -> str:
+        """The workset, or the sentence that says there isn't one."""
+        if not self.workset:
+            return ("The whole crate. Nothing in it is out of scope.")
+        listing = "\n".join(f"  {f}" for f in self.workset)
+        return ("These files, and only these:\n\n" + listing + "\n\n"
+                "Read whatever you need to understand them — callers, callees, "
+                "the C on the other side. But the bug you report must live in "
+                "one of them. Other agents are working the rest of the crate "
+                "at the same time and share your `advisories/` and `leads/`.")
 
     def system_preamble(self) -> str:
         """The role and the one hard rule.
@@ -201,12 +308,16 @@ class AuditAgent:
             "reachable from safe code.\n\n"
             "A finding you cannot demonstrate is a hypothesis. Say which you "
             "are reporting.\n\n"
-            "HARD RULE. During investigation, inside the audited workspace you "
-            "may write ONLY under its `crustify/audit/` directory -- your notes, "
-            "advisories, and scratch work belong there. You may edit target "
-            "source, tests, and build files only after confirming a finding and "
-            "only after creating the dedicated target Git branch required by "
-            "the prompt."
+            "HARD RULE. Inside the audited checkout you may write ONLY under "
+            "its `crustify/audit/` directory -- your leads, advisories, and "
+            "scratch work belong there. Other agents are reading that same "
+            "checkout while you work.\n\n"
+            + ("Your objective is `audit`: you do not modify target source, "
+               "tests, or build files at all."
+               if self.objective == "audit" else
+               "Your objective is `" + self.objective + "`: target source, "
+               "tests, and build files are edited ONLY inside a git worktree "
+               "you create, never in the checkout itself.")
         )
 
     # ------------------------------------------------------- instruments
@@ -225,3 +336,45 @@ class AuditAgent:
     def miri_available(cls) -> bool:
         return shutil.which("cargo") is not None and cls._ok(
             ["cargo", "+nightly", "miri", "--version"])
+
+    @classmethod
+    def bsan_available(cls) -> bool:
+        """BorrowSanitizer: Tree Borrows on a program that really links the C.
+
+        The one instrument that answers the aliasing question across the FFI
+        seam, which is where a wrapper crate's interesting behaviour lives. Its
+        absence is not fatal -- miri and the sanitizers each still answer their
+        own half -- so this only decides whether the CLI says it is missing.
+        """
+        return shutil.which("cargo") is not None and cls._ok(
+            ["cargo", "bsan", "--version"])
+
+    @staticmethod
+    def asan_ubsan_available() -> bool:
+        """Prove that clang can link and run both sanitizer runtimes.
+
+        A version check is insufficient: distro clang packages can exist
+        without compiler-rt, which fails only at the final link. This tiny
+        executable checks the same compiler/runtime seam an audit needs.
+        """
+        clang = shutil.which("clang")
+        if clang is None:
+            return False
+        source = "int main(void) { return 0; }\n"
+        try:
+            with tempfile.TemporaryDirectory(prefix="crustify-sanitizer-probe-") as tmp:
+                binary = Path(tmp) / "probe"
+                built = subprocess.run(
+                    [clang, "-x", "c", "-fsanitize=address,undefined", "-",
+                     "-o", str(binary)],
+                    input=source,
+                    capture_output=True,
+                    text=True,
+                )
+                if built.returncode != 0:
+                    return False
+                return subprocess.run(
+                    [str(binary)], capture_output=True, text=True
+                ).returncode == 0
+        except OSError:
+            return False

@@ -2,6 +2,7 @@
 
     crustify-audit <workspace> unsafe [--json] [--name NAME ...]
     crustify-audit <workspace> ub     [--model M] [--billing B] [--timeout MIN]
+                                      [--instruments I ...]
 
 TWO VERBS, AND THE SPLIT IS THE POINT.
 
@@ -72,16 +73,41 @@ def build_parser() -> argparse.ArgumentParser:
         description="Drive ONE agent hunting UB reachable from safe code. It "
                     "reads the crate itself to find what is worth looking at, "
                     "and can run `unsafe` for the numbers. The agent builds its own "
-                    "reproductions, checks them under miri, and writes the "
+                    "reproductions, checks them with the selected instruments, and writes the "
                     "advisory itself — the harness supplies a workspace and a "
                     "scratch directory and nothing else. It never writes to the "
                     "audited workspace outside its `crustify/audit/` directory. It "
-                    "writes one note per lead investigated into crustify/audit/notes/ "
+                    "writes one file per lead investigated into crustify/audit/leads/ "
                     "and one advisory per CONFIRMED bug into "
                     "crustify/audit/advisories/ — an advisory means something actually "
                     "crashed. Runs ACCUMULATE: there is no skip, and the agent "
                     "reads what earlier runs left before starting, so a second "
                     "run extends the record instead of re-deriving it.")
+    h.add_argument("--objective", choices=("audit", "audit+patch", "patch"),
+                   default="audit",
+                   help="What this run is for. `audit` (default) hunts and "
+                        "writes advisories and leads, and touches nothing else "
+                        "in the target — which is what makes several agents "
+                        "safe to run against one checkout at the same time. "
+                        "`audit+patch` also repairs what it confirms; `patch` "
+                        "skips the hunt and repairs advisories that are already "
+                        "there. Both patching objectives develop in a git "
+                        "worktree, so they still do not disturb the checkout "
+                        "other agents are reading.")
+    h.add_argument("--workset", nargs="+", action="extend", default=None,
+                   metavar="PATH",
+                   help="Confine this agent to these files, so that agents run "
+                        "in parallel against one target divide the crate "
+                        "instead of duplicating each other. Paths relative to "
+                        "the repo. Omitted, the whole crate is in scope.")
+    from crustify_audit.agents.base import INSTRUMENTS
+    h.add_argument("--instruments", nargs="+", choices=INSTRUMENTS,
+                   default=None, metavar="INSTRUMENT",
+                   help="Constrain the hunt and advisory evidence to one or "
+                        "more of: miri (Rust UB), asan/ubsan (native memory "
+                        "and language UB), bsan (Tree Borrows aliasing across "
+                        "FFI). The resolved prompt lists the exact bug "
+                        "classes. Omitted, all are selected.")
     h.add_argument("--model", default=None, metavar="PROVIDER/MODEL",
                    help="e.g. anthropic/claude-opus-5, openai/gpt-5.6. The "
                         "provider prefix selects the backend and is mandatory.")
@@ -123,21 +149,41 @@ def _cmd_unsafe(layout: Layout, args) -> int:
     return 0
 
 
+def _instrument_warnings(agent) -> list[str]:
+    """Readiness warnings for selected instruments only."""
+    warnings = []
+    if "miri" in agent.instruments and not agent.miri_available():
+        warnings.append(
+            "`cargo +nightly miri` is not available. Install with: "
+            "rustup component add miri --toolchain nightly"
+        )
+    if "asan/ubsan" in agent.instruments and not agent.asan_ubsan_available():
+        warnings.append(
+            "clang cannot link and run `-fsanitize=address,undefined`; install "
+            "clang's compiler-rt sanitizer runtimes before launching this scope"
+        )
+    if "bsan" in agent.instruments and not agent.bsan_available():
+        warnings.append(
+            "`cargo bsan` is not available. BorrowSanitizer ships as "
+            "ghcr.io/borrowsanitizer/bsan:latest (Linux x86_64/aarch64)"
+        )
+    return warnings
+
+
 def _cmd_ub(layout: Layout, args) -> int:
     from crustify_audit.agents.base import AuditAgent
 
-    # A warning, not a gate: whether miri is installed is mechanism, and the
-    # agent may still have something useful to say without it. But it should be
-    # said out loud, because an advisory written without miri is a different
-    # kind of document.
-    if not AuditAgent.miri_available():
-        print("[crustify-audit] warning: `cargo +nightly miri` is not available, "
-              "so the agent cannot check its own reproductions. Install with: "
-              "rustup component add miri --toolchain nightly",
-              file=sys.stderr)
     agent = AuditAgent(layout, model=args.model,
                        timeout_s=(args.timeout * 60) or None,
-                       billing=args.billing)
+                       billing=args.billing,
+                       objective=args.objective,
+                       workset=args.workset,
+                       instruments=args.instruments)
+
+    print("[crustify-audit] resolved instrument and bug-class scope:\n")
+    print(agent._instruments_text())
+    for warning in _instrument_warnings(agent):
+        print(f"[crustify-audit] warning: {warning}", file=sys.stderr)
 
     # There is no skip: runs accumulate. Say what is already on disk so the
     # caller knows this run is adding to a record rather than starting one --
@@ -152,11 +198,11 @@ def _cmd_ub(layout: Layout, args) -> int:
     new_adv, new_leads = now[0] - was[0], now[1] - was[1]
 
     print(f"[crustify-audit] advisories : {now[0]} ({new_adv:+d})  {layout.advisories}")
-    print(f"[crustify-audit] lead notes : {now[1]} ({new_leads:+d})  {layout.notes}")
+    print(f"[crustify-audit] leads      : {now[1]} ({new_leads:+d})  {layout.leads}")
     print(f"[crustify-audit] repros     : {layout.scratch}")
     if now[0] == 0:
         print("\n  No advisories: nothing was demonstrated. That is a result, "
-              "not a failure —\n  read the lead notes to see what was judged.")
+              "not a failure —\n  read the leads to see what was judged.")
     else:
         print("\n  Triage each advisory: run its reproduction yourself, then "
               "check it matches\n  the source line it cites. Both hold -> real.")

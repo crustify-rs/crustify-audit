@@ -10,7 +10,7 @@ that, and could not have been run through either.
 Artifacts land in ``<repo>/crustify/audit/`` -- under the same directory
 crustify-cli uses at a repo root, so auditing a crate that IS a crustify
 campaign target puts the audit beside the campaign rather than in a second
-place. Inside the audited tree on purpose: notes and advisories are about that
+place. Inside the audited tree on purpose: leads and advisories are about that
 crate and should travel with it, and accumulate across runs.
 
 """
@@ -84,25 +84,24 @@ class Layout:
         return self.root / "advisories"
 
     @property
-    def notes(self) -> Path:
-        """One note per LEAD investigated, whether or not it panned out.
+    def leads(self) -> Path:
+        """One file per LEAD investigated, whether or not it panned out.
 
         This is the audit trail and the anti-duplication record at once. A lead
         that was chased and cleared is a result: it stops the next run spending
         its budget re-deriving the same "no".
         """
-        return self.root / "notes"
+        return self.root / "leads"
 
     @property
     def scratch(self) -> Path:
-        """`tmp/` -- the agent's writable area: reproductions, miri output.
+        """The agent's working area: experiments, dead ends, instrument output.
 
-        Named for what it is, and kept under the artifact root beside the
-        advisories that cite it, so a reproduction stays findable from the
-        finding it backs. What goes in it is the agent's business; the harness
-        only guarantees the directory exists.
+        Deliberately NOT where a confirmed reproduction lives. That goes in a
+        directory beside its advisory, because it has to still run months
+        later; anything here is disposable and may be deleted between runs.
         """
-        return self.root / "tmp"
+        return self.root / "scratch"
 
     @property
     def logs(self) -> Path:
