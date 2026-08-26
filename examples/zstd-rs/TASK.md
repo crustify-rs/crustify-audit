@@ -1,7 +1,15 @@
 ---
 
-Fill in every mandatory answer before a headless run.
+Fill in every mandatory answer before a headless run. Interactively, the
+orchestrator asks for any mandatory answer left blank or in angle brackets.
 Optional answers may be left unresolved for the orchestrator to decide.
+
+The target checkout is mounted at `/target`, so the questionnaire does not ask
+which repository to audit.
+
+Campaign target: zstd-rs (`zstd`, `zstd-safe`, `zstd-sys`, vendored libzstd
+submodule at `zstd-safe/zstd-sys/zstd`). The default build compiles the
+vendored C, so it is instrumented.
 
 # Mandatory questions
 
@@ -9,18 +17,19 @@ Optional answers may be left unresolved for the orchestrator to decide.
 
 1. **Should the auditors only report, also repair what they confirm, or only
    repair advisories that are already there?**
-   - Answer: `<audit | audit+patch | patch>`
+   - Answer: `audit`
 2. **How many auditors should run at once?**
-   - Answer: `<N>`
+   - Answer: `4`
 3. **What is the wall-clock budget per auditor, in minutes? Spend is roughly
    this times the number of auditors.**
-   - Answer: `<minutes>`
-4. **Which backend and model should the auditors use?**
-   - Answer: `<backend, model>`
+   - Answer: `60 minutes`
+4. **Which backend and model should the auditors use? The same one as the
+   orchestrator?**
+   - Answer: `same as orchestrator`
 5. **Which billing mode should agentic stages use?**
-   - Answer: `<api | subscription>`
+   - Answer: `api`
 6. **Which instruments should the auditors hunt with?**
-   - Answer: `<miri | asan/ubsan | bsan | space-separated combination>`
+   - Answer: `asan/ubsan bsan`
    - `miri`: Rust-side memory, value-validity, alignment, aliasing, intrinsic,
      and data-race UB in code Miri can execute.
    - `asan/ubsan`: native out-of-bounds, lifetime/free, pointer/alignment,
@@ -35,4 +44,4 @@ Unanswered optional questions are decided by the orchestrator.
 ## Reporting
 
 7. **Where and in what format should results be recorded?**
-   - Answer: `<results path>, <examples/results.md | custom template>`
+   - Answer: `crustify/audit/`, `examples/results.md`
