@@ -47,3 +47,8 @@ After they finish, summarize the advisories and leads and write the requested
 report and put it in `crustify/audit/results.md`. The report must preserve the
 resolved instrument-to-bug-class scope and
 mark selected instruments that were unavailable as untested, never clean.
+
+## Avoid leaks
+
+Do not leak any API keys in core dumps or any other reproducer artifacts
+as we might be making the audit tree open source.

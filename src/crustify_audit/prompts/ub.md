@@ -59,3 +59,8 @@ tests, run the relevant project checks, and rerun the original reproduction.
 Commit the repair in the worktree. Do not merge, do not push, and do not remove
 the worktree. Record the worktree, branch, commit, commands, and results in the
 advisory.
+
+## Avoid leaks
+
+Do not include any API keys in core dumps or any other reproducer artifacts
+as we might be making the audit tree open source.
