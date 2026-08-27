@@ -1,8 +1,7 @@
 import unittest
-from unittest.mock import patch
 
 from crustify_audit.agents.base import AuditAgent, INSTRUMENT_SPECS
-from crustify_audit.cli import _instrument_warnings, build_parser
+from crustify_audit.cli import build_parser
 from crustify_audit.layout import Layout
 from pathlib import Path
 
@@ -106,21 +105,6 @@ class UbPromptTests(unittest.TestCase):
         ])
 
         self.assertEqual(["miri", "bsan"], args.instruments)
-
-    def test_readiness_checks_only_selected_instruments(self):
-        agent = _agent(instruments=["asan/ubsan"])
-        with (
-            patch.object(AuditAgent, "miri_available") as miri,
-            patch.object(AuditAgent, "asan_ubsan_available", return_value=False) as asan,
-            patch.object(AuditAgent, "bsan_available") as bsan,
-        ):
-            warnings = _instrument_warnings(agent)
-
-        self.assertEqual(1, len(warnings))
-        self.assertIn("-fsanitize=address,undefined", warnings[0])
-        miri.assert_not_called()
-        asan.assert_called_once_with()
-        bsan.assert_not_called()
 
     def test_orchestrator_reveals_and_records_the_resolved_scope(self):
         orchestrator = (

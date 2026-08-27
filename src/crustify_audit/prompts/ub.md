@@ -30,8 +30,8 @@ Use `{workspace}/crustify/audit/`:
 
 - `leads/`: one Markdown file for every candidate you investigate, including
   candidates you clear.
-- `advisories/`: one Markdown file for every confirmed bug, plus a directory
-  with the same stem containing its reproducer.
+- `advisories/`: one directory per confirmed bug with same stem containing
+  the reproducer and a `report.md` with the advisory.
 - `scratch/`: disposable investigation files.
 
 Read existing leads and advisories first. Do not duplicate completed work.

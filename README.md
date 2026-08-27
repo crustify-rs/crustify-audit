@@ -93,30 +93,29 @@ The container starts an orchestrator that resolves the run plan and launches
 auditors against the checkout mounted at `/target`.
 
 ```sh
-docker build -t crustify-audit examples/
+docker build -t crustify-audit -f examples/Dockerfile .
 
 docker run --rm -it --name audit-target \
   -e ANTHROPIC_API_KEY \
   -e CRUSTIFY_BACKEND=claude \
   -e CRUSTIFY_MODEL=claude-opus-5 \
-  -v "$PWD:/opt/crustify-audit" \
   -v /path/to/target-repo:/target \
+  -v /host/campaign/TASK.md:/campaign/TASK.md:ro \
   -v audit-target-work:/work \
   crustify-audit
 ```
+
+The harness is installed in the image. During harness development, mount this
+checkout at `/opt/crustify-audit` to run its live sources instead.
 
 For Codex, use `CRUSTIFY_BACKEND=codex`, pass the model ID exactly as Codex
 expects it, and provide `OPENAI_API_KEY`. The model is likewise passed verbatim
 to Claude.
 
-To pre-fill a run, complete [`examples/TASK.md`](examples/TASK.md) and mount it:
-
-```sh
--v /host/campaign/TASK.md:/campaign/TASK.md:ro
-```
-
-The task is appended only when that mount exists. Without it, the orchestrator
-asks for mandatory decisions. A headless run therefore needs a complete task.
+Before running, complete [`examples/TASK.md`](examples/TASK.md) and place it at
+the host path mounted as `/campaign/TASK.md` above. Without that mount, the
+orchestrator asks for mandatory decisions. A headless run therefore needs a
+complete task.
 
 | variable | values | default |
 |---|---|---|

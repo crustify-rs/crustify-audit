@@ -5,12 +5,12 @@
 # mandatory questions not already filled in TASK.md. A headless run needs all
 # mandatory TASK answers.
 #
-#   docker build -t crustify-audit examples/
+#   docker build -t crustify-audit -f examples/Dockerfile .
 #
 #   docker run --rm -it --name audit-ippcp \
 #       -e ANTHROPIC_API_KEY \
-#       -v "$PWD:/opt/crustify-audit" \
 #       -v /path/to/target-repo:/target \
+#       -v /host/campaign/TASK.md:/campaign/TASK.md:ro \
 #       -v audit-ippcp-work:/work \
 #       crustify-audit
 #
@@ -22,8 +22,8 @@
 #                        A repository, not a bare workspace: the crate is the
 #                        root or `crustify/rust`, and `ub` needs the C sources
 #                        beside it to build a reproduction that links the crate.
-#   /opt/crustify-audit  This repo, read-write so an agent that finds a flaw in
-#                        the tool can fix it.
+#   /opt/crustify-audit  The harness is baked into the image. A checkout may be
+#                        mounted here to test live harness changes instead.
 #   /work                Named volume, and `HOME`: the C library the agent
 #                        builds, the cargo registry. Not the audit artifacts —
 #                        those are in the target checkout. Nothing installed at
@@ -34,7 +34,7 @@
 # does not start by building one, and stops there: what a subject needs is not
 # something this file can know, and pinning it dates the image to one target.
 
-FROM debian:12-slim
+FROM ghcr.io/borrowsanitizer/bsan:latest
 
 ARG PYTHON_VERSION=3.13
 # Both backends by default; either can be dropped from the image.
@@ -44,35 +44,34 @@ ARG INSTALL_CODEX=1
 ENV DEBIAN_FRONTEND=noninteractive \
     PATH=/opt/venv/bin:/root/.cargo/bin:/root/.local/bin:$PATH \
     CARGO_TERM_COLOR=never \
-    # bindgen dlopens libclang at run time, and the versioned package ships it
-    # as libclang-19.so.1 rather than the libclang.so.1 clang-sys looks for.
-    LIBCLANG_PATH=/usr/lib/llvm-19/lib \
     # Claude Code refuses --dangerously-skip-permissions as root without this.
     IS_SANDBOX=1
 
-# A generic C toolchain. `nasm`/`yasm` because a crypto subject needing one
-# otherwise costs the agent a source build before it can start.
+# BorrowSanitizer supplies its matched Rust/Clang/LLVM toolchain. Add the
+# remaining generic build tools; `nasm`/`yasm` avoid a source build before a
+# crypto audit can start. libclang-dev supports ordinary bindgen builds; bsan
+# selects its own matched libclang when it instruments a build.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates curl git unzip xz-utils pkg-config file \
-        build-essential clang-19 lld-19 cmake ninja-build \
+        ca-certificates unzip xz-utils file lld libclang-dev \
         nasm yasm autoconf automake libtool m4 python3 \
-    && rm -rf /var/lib/apt/lists/* \
-    && ln -s clang-19   /usr/bin/clang \
-    && ln -s clang++-19 /usr/bin/clang++ \
-    && ln -s ld.lld-19  /usr/bin/ld.lld
+    && rm -rf /var/lib/apt/lists/*
 
-# crustify-audit needs Python >= 3.13; bookworm ships 3.11.
+# Keep the harness Python independent of whichever Python the base image uses.
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
     && uv python install "${PYTHON_VERSION}" \
     && uv venv --python "${PYTHON_VERSION}" /opt/venv
 
-# Nightly with `rustc-dev` and `llvm-tools` is what the metrics driver is built
-# against; `miri` is what the agent checks its reproductions with.
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-      | sh -s -- -y --default-toolchain stable --component clippy \
+# Preserve the base image's `bsan` toolchain, and install our ordinary Rust
+# toolchains alongside it. Stable remains the default so unqualified Cargo
+# commands do not accidentally compile targets with the custom bsan compiler;
+# BorrowSanitizer is invoked explicitly as `cargo +bsan bsan ...`.
+RUN rustup toolchain install stable --component clippy \
     && rustup toolchain install nightly \
-         --component rustc-dev --component llvm-tools --component miri \
-    && cargo +nightly miri --version
+         --component rustc-dev --component llvm-tools --component rust-src \
+         --component miri \
+    && rustup default stable \
+    && cargo +nightly miri --version \
+    && cargo +bsan bsan --version
 
 RUN if [ "${INSTALL_CLAUDE}" = "1" ]; then \
         curl -fsSL https://claude.ai/install.sh | bash; \
@@ -81,10 +80,13 @@ RUN if [ "${INSTALL_CLAUDE}" = "1" ]; then \
         curl -fsSL https://chatgpt.com/codex/install.sh | sh; \
     fi
 
-# The tool comes from the MOUNT, not the image: it has no third-party
-# dependencies, so installing it would buy only unmounted runs, at the cost of
-# baking in a revision. Nor is the metrics driver prebuilt — only a run-time
-# build matches the checkout driving the run.
+# Bake in a runnable harness. A bind mount at this path replaces these sources,
+# and PYTHONPATH intentionally makes that mounted checkout win over the wheel
+# installed in the virtual environment. The metrics driver remains a run-time
+# build because it must match the nightly compiler driving that run.
+COPY pyproject.toml /opt/crustify-audit/pyproject.toml
+COPY src /opt/crustify-audit/src
+RUN uv pip install --python /opt/venv/bin/python --no-deps /opt/crustify-audit
 ENV PYTHONPATH=/opt/crustify-audit/src
 
 # `orchestrate` starts the interviewing agent, which spawns the auditors.
@@ -144,7 +146,7 @@ RUN printf '%s\n' '#!/usr/bin/env bash' \
 
 RUN printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' \
       '[ -d /opt/crustify-audit/src/crustify_audit ] || {' \
-      '    echo "no checkout at /opt/crustify-audit — mount this repo there" >&2' \
+      '    echo "no crustify-audit harness at /opt/crustify-audit" >&2' \
       '    exit 2; }' \
       'target=/target' \
       '# The deterministic scan needs no agent and no auth: run it and stop.' \
@@ -189,7 +191,7 @@ RUN printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' \
       '        effort=(-c "model_reasoning_effort=\"${CRUSTIFY_EFFORT}\"") ;;' \
       '    *) echo "bad CRUSTIFY_EFFORT: ${CRUSTIFY_EFFORT}" >&2; exit 2 ;;' \
       'esac' \
-      '# The prompt comes from the MOUNT, so editing it does not mean rebuilding.' \
+      '# A development mount overrides the prompt baked into the image.' \
       'prompt=/opt/crustify-audit/src/crustify_audit/prompts/orchestrator.md' \
       '[ -f "$prompt" ] || { echo "no orchestrator prompt at $prompt" >&2; exit 2; }' \
       '# What only the container knows, appended rather than templated into the' \

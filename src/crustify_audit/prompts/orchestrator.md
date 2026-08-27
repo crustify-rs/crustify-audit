@@ -21,6 +21,9 @@ authorizes the run.
 Install the target's system dependencies and the selected instruments, then
 verify them by invocation before planning.
 
+If BSan (BorrowSanitizer) is not available, compile and install it from source according
+to the guidelines in the official repo: https://github.com/borrowSanitizer/bsan
+
 ## Plan
 
 Verify the target revision. For `audit` and `audit+patch`, run the deterministic

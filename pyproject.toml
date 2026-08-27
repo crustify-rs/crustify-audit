@@ -17,4 +17,4 @@ where = ["src"]
 include = ["crustify_audit*"]
 
 [tool.setuptools.package-data]
-crustify_audit = ["prompts/*.md"]
+crustify_audit = ["prompts/*.md", "templates/*"]

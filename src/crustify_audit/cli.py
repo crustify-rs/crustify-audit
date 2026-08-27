@@ -149,27 +149,6 @@ def _cmd_unsafe(layout: Layout, args) -> int:
     return 0
 
 
-def _instrument_warnings(agent) -> list[str]:
-    """Readiness warnings for selected instruments only."""
-    warnings = []
-    if "miri" in agent.instruments and not agent.miri_available():
-        warnings.append(
-            "`cargo +nightly miri` is not available. Install with: "
-            "rustup component add miri --toolchain nightly"
-        )
-    if "asan/ubsan" in agent.instruments and not agent.asan_ubsan_available():
-        warnings.append(
-            "clang cannot link and run `-fsanitize=address,undefined`; install "
-            "clang's compiler-rt sanitizer runtimes before launching this scope"
-        )
-    if "bsan" in agent.instruments and not agent.bsan_available():
-        warnings.append(
-            "`cargo bsan` is not available. BorrowSanitizer ships as "
-            "ghcr.io/borrowsanitizer/bsan:latest (Linux x86_64/aarch64)"
-        )
-    return warnings
-
-
 def _cmd_ub(layout: Layout, args) -> int:
     from crustify_audit.agents.base import AuditAgent
 
@@ -182,9 +161,6 @@ def _cmd_ub(layout: Layout, args) -> int:
 
     print("[crustify-audit] resolved instrument and bug-class scope:\n")
     print(agent._instruments_text())
-    for warning in _instrument_warnings(agent):
-        print(f"[crustify-audit] warning: {warning}", file=sys.stderr)
-
     # There is no skip: runs accumulate. Say what is already on disk so the
     # caller knows this run is adding to a record rather than starting one --
     # and knows it is about to spend either way.

@@ -18,34 +18,42 @@ import json
 from pathlib import Path
 
 from crustify_audit import driver
-from crustify_audit.layout import CAMPAIGN_WORKSPACE, Layout
+from crustify_audit.layout import Layout
 
-_SCAN_IGNORE = "/unsafe.json"
+#: The canonical ignore template, tracked as package data so every audit gets
+#: the same one and a fix to it reaches every target. Regenerating build trees
+#: is cheap; re-deriving an advisory is not, so only the former is excluded.
+_IGNORE_TEMPLATE = Path(__file__).resolve().parent / "templates" / "audit.gitignore"
+
+#: First line of the template. Its presence is what makes writing idempotent,
+#: so the whole block moves when the template changes rather than accumulating
+#: one line at a time.
+_IGNORE_MARKER = "# crustify-audit artifacts"
+
+
+def scan_ignore_template() -> str:
+    """The canonical `crustify/audit/.gitignore` body."""
+    return _IGNORE_TEMPLATE.read_text()
 
 
 def _ensure_scan_ignored(layout: Layout) -> None:
-    """Keep the reproducible scan out of commits without hiding advisories."""
+    """Keep regenerable output out of commits without hiding the record."""
     campaign_ignore = layout.repo / "crustify" / ".gitignore"
     if campaign_ignore.is_file():
         if "audit/unsafe.json" in campaign_ignore.read_text().splitlines():
             return
     ignore = layout.root / ".gitignore"
     existing = ignore.read_text() if ignore.is_file() else ""
-    if _SCAN_IGNORE in existing.splitlines():
+    if _IGNORE_MARKER in existing:
         return
     prefix = existing
     if prefix and not prefix.endswith("\n"):
         prefix += "\n"
-    ignore.write_text(prefix + _SCAN_IGNORE + "\n")
+    ignore.write_text(prefix + scan_ignore_template())
 
 
 def compose(layout: Layout, names: list[str] | None = None) -> dict:
     """Scan the workspace and return the metrics document."""
-    if not layout.is_cargo_workspace():
-        raise SystemExit(
-            f"metrics: no crate at {layout.repo} — looked for Cargo.toml there "
-            f"and at {CAMPAIGN_WORKSPACE}/. Point crustify-audit at a "
-            f"repository holding one.")
     doc: dict = {"crate_path": str(layout.workspace)}
     try:
         doc["counts"], entries = driver.measure(layout.workspace, names=names)

@@ -20,7 +20,13 @@ class NamedSeedTests(unittest.TestCase):
             _ensure_scan_ignored(layout)
             _ensure_scan_ignored(layout)
 
-            self.assertEqual(ignore.read_text(), "/tmp/\n/unsafe.json\n")
+            body = ignore.read_text()
+            self.assertTrue(body.startswith("/tmp/\n"))
+            self.assertEqual(1, body.count("# crustify-audit artifacts"))
+            for pattern in ("/unsafe.json", "/scratch/", "**/target/",
+                            "**/target-*/"):
+                self.assertIn(pattern, body)
+            self.assertNotIn("\n/logs/\n", body)
 
     def test_campaign_ignore_avoids_a_per_agent_ignore_file(self):
         with tempfile.TemporaryDirectory() as tmp:

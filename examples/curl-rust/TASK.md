@@ -21,7 +21,7 @@ Optional answers may be left unresolved for the orchestrator to decide.
 5. **Which billing mode should agentic stages use?**
    - Answer: `api`
 6. **Which instruments should the auditors hunt with?**
-   - Answer: `asan/ubsan bsan`
+   - Answer: `asan/ubsan and bsan (borrowsanitizer)`
 
 # Optional questions
 
@@ -30,4 +30,9 @@ Unanswered optional questions are decided by the orchestrator.
 ## Reporting
 
 7. **Where and in what format should results be recorded?**
-   - Answer: `crustify/audit/`, `examples/results.md`
+   - Answer: use the canonical template from `examples/results.md`
+   and author it in `crustify/audit/`.
+
+## Additional instructions
+
+Unless otherwise stated, match the structure of the given results table exactly.
