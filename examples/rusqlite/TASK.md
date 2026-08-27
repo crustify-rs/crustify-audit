@@ -20,7 +20,7 @@ Optional answers may be left unresolved for the orchestrator to decide.
 5. **Which billing mode should agentic stages use?**
    - Answer: `api`
 6. **Which instruments should the auditors hunt with?**
-   - Answer: `asan/ubsan | bsan`
+   - Answer: `asan/ubsan bsan`
 
 # Optional questions
 
