@@ -20,11 +20,11 @@ prose belongs in Notes.
 One row per CONFIRMED bug: an instrument reported UB on a reproduction that
 links the real crate.
 
-| advisory | site | agent run | miri | asan/ubsan | bsan | patch |
+| advisory | site | agent run | instrument | reported | fixed | patch |
 |---|---|---|:-:|:-:|:-:|---|
-| `<name>` | `<file>:<line>` | `<tag>` | ✓ | — | n/a | `<branch>` @ `<sha>` |
-| `<name>` | `<file>:<line>` | `<tag>` | n/a | ✓ | ✓ | — |
-| **Σ `<n>` advisories** | | | **`<n>`** | **`<n>`** | **`<n>`** | **`<n>` patched** |
+| `<name>` | `<file>:<line>` | `<tag>` | `miri` | ✓ | | `<branch>` @ `<sha>` |
+| `<name>` | `<file>:<line>` | `<tag>` | `asan/ubsan` | | | |
+| **Σ `<n>` advisories** | | | **`miri` `<n>` · `asan/ubsan` `<n>` · `bsan` `<n>`** | **`<n>`** | **`<n>`** | **`<n>` patched** |
 
 ## Leads
 
@@ -63,13 +63,21 @@ amount.
 
 ## Legend
 
-- **miri / asan/ubsan / bsan** — `✓` fired on this finding, `—` ran and did
-  not, `n/a` could not run it. Miri is `n/a` wherever the faulting access is
-  inside C; bsan is the one that answers aliasing across that seam
+- **instrument** — the selected instrument that fired on this finding, tagged
+  `miri` / `asan/ubsan` / `bsan`. One tag per row: an advisory exists because
+  something crashed, and this names what caught it. A tag missing from the whole
+  column is not a clean bill — record in Notes what each instrument was and was
+  not run against. Miri cannot reach a faulting access inside C; bsan is the one
+  that answers aliasing across that seam
+- **reported** — `✓` once the finding has been sent to its recipient, per that
+  advisory's `disclosure.md`; blank means drafted but not yet sent
+- **fixed** — `✓` once a fix has landed upstream or in the audited project;
+  blank if not tracked
 - **agent run** — tag of the run that produced the finding, matching the Agent
   runs table
 - **site** — where the bug is, not where the reproduction is
-- **patch** — the worktree branch carrying the fix, `—` under `audit`
+- **patch** — the worktree branch carrying the fix; blank under `audit`, which
+  patches nothing
 - **files** — size of that agent's `--workset`; blank for a single agent, which
   gets the whole crate
 
