@@ -29,4 +29,10 @@ Unanswered optional questions are decided by the orchestrator.
 ## Reporting
 
 7. **Where and in what format should results be recorded?**
-   - Answer: `crustify/audit/`, `examples/results.md`
+   - Answer: use the canonical template from `examples/results.md`
+   and author it in `crustify/audit/`.
+
+## Additional instructions
+
+Unless otherwise stated, match the structure of the given results table exactly.
+
