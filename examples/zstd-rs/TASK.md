@@ -25,17 +25,11 @@ vendored C, so it is instrumented.
    - Answer: `60 minutes`
 4. **Which backend and model should the auditors use? The same one as the
    orchestrator?**
-   - Answer: `same as orchestrator`
+   - Answer: `claude, opus-5`
 5. **Which billing mode should agentic stages use?**
-   - Answer: `api`
+   - Answer: `subscription`
 6. **Which instruments should the auditors hunt with?**
-   - Answer: `asan/ubsan bsan`
-   - `miri`: Rust-side memory, value-validity, alignment, aliasing, intrinsic,
-     and data-race UB in code Miri can execute.
-   - `asan/ubsan`: native out-of-bounds, lifetime/free, pointer/alignment,
-     integer/shift, and invalid runtime-value UB in executed instrumented code.
-   - `bsan`: Tree Borrows aliasing and pointer invalidation across Rust and
-     foreign code.
+   - Answer: `miri and asan/ubsan and bsan (borrowsanitizer)`
 
 # Optional questions
 
@@ -44,4 +38,9 @@ Unanswered optional questions are decided by the orchestrator.
 ## Reporting
 
 7. **Where and in what format should results be recorded?**
-   - Answer: `crustify/audit/`, `examples/results.md`
+   - Answer: use the canonical template from `examples/results.md`
+   and author it in `crustify/audit/`.
+
+## Additional instructions
+
+Unless otherwise stated, match the structure of the given results table exactly.
