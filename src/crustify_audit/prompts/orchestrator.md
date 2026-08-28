@@ -52,3 +52,9 @@ mark selected instruments that were unavailable as untested, never clean.
 
 Do not leak any API keys in core dumps or any other reproducer artifacts
 as we might be making the audit tree open source.
+
+## Verify claims
+
+Make consistency checks over the disclosures and verify that they do not
+make false claims. Verify that the reproducers are sound. Make sure disclosure
+notices comply with our the instructions listed in the `ub.md` prompt.

@@ -64,3 +64,17 @@ advisory.
 
 Do not include any API keys in core dumps or any other reproducer artifacts
 as we might be making the audit tree open source.
+
+## Draft disclosure notice
+
+Read the affected repo's conventions for disclosing security / UB issues and
+draft a disclosure notice that the user could send outside the box without
+further adjustments. If it should be first sent via email, use an email-friendly
+format, and name the maintainers to which it should be disclosed. Keep disclosure
+notices under 450 words. Only offer to provide fix patches or PRs when your objective
+included that, otherwise we only disclose. Mentioned reproducers are only provided
+on request but add in the disclosure a small snippet and the santizer crash.
+
+Add the following note to the disclosure: `Found by [Crustify](https://github.com/crustify-rs/crustify-audit),
+an experimental UB/soundness auditing agent developed at UC Berkeley and running on <model name>,
+then manually reviewed and independently reproduced.`
