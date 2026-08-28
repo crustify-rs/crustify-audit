@@ -16,11 +16,11 @@ Optional answers may be left unresolved for the orchestrator to decide.
    this times the number of auditors.**
    - Answer: `30`
 4. **Which backend and model should the auditors use?**
-   - Answer: `codex, gpt-5.6-sol`
+   - Answer: `codex, gpt-5.6-luna`
 5. **Which billing mode should agentic stages use?**
    - Answer: `api`
 6. **Which instruments should the auditors hunt with?**
-   - Answer: `asan/ubsan bsan`
+   - Answer: `bsan`
 
 # Optional questions
 
