@@ -42,7 +42,7 @@ ARG INSTALL_CLAUDE=1
 ARG INSTALL_CODEX=1
 
 ENV DEBIAN_FRONTEND=noninteractive \
-    PATH=/opt/venv/bin:/root/.cargo/bin:/root/.local/bin:$PATH \
+    PATH=/opt/bsan-shim:/opt/venv/bin:/root/.cargo/bin:/root/.local/bin:$PATH \
     CARGO_TERM_COLOR=never \
     # Claude Code refuses --dangerously-skip-permissions as root without this.
     IS_SANDBOX=1
@@ -70,8 +70,51 @@ RUN rustup toolchain install stable --component clippy \
          --component rustc-dev --component llvm-tools --component rust-src \
          --component miri \
     && rustup default stable \
-    && cargo +nightly miri --version \
-    && cargo +bsan bsan --version
+    && cargo +nightly miri --version
+
+# `cargo bsan` (no `+bsan`) is the form anyone writes by reflex, and it fails in
+# the most misleading way available. cargo-bsan picks its clang from the ACTIVE
+# rustc's LLVM version, so under the default stable toolchain (LLVM 22) it hunts
+# for `clang-22` -- which nobody ships -- and dies with `failed to find
+# clang-22`. That reads as "BorrowSanitizer is not installed", and the version
+# probe still exits 0, so nothing warns you earlier. Only the bsan toolchain
+# carries the matching clang. Cargo also exports `CARGO` as its resolved stable
+# binary to subcommands, so override both that path and the toolchain in a shim
+# placed ahead of the rustup binary on PATH. Then both `cargo bsan` and
+# `cargo +bsan bsan` work.
+# The real binary is in the image layer at /root/.cargo/bin -- NOT under
+# CARGO_HOME, which is redirected to the /work volume further down.
+RUN mkdir -p /opt/bsan-shim \
+    && printf '%s\n' '#!/usr/bin/env bash' \
+         'exec env RUSTUP_TOOLCHAIN=bsan CARGO=/root/.cargo/bin/cargo /root/.cargo/bin/cargo-bsan "$@"' \
+       > /opt/bsan-shim/cargo-bsan \
+    && chmod +x /opt/bsan-shim/cargo-bsan
+
+# Verify BorrowSanitizer by INVOCATION, not by version string. `cargo bsan
+# --version` answers from the binary alone: it exits 0 on an image whose
+# toolchain cannot instrument anything, so it cannot tell a working image from a
+# broken one. Build and RUN a known Tree Borrows violation instead, and require
+# the diagnostic. A silently inert bsan is worse than an absent one -- an
+# auditor that cannot run it records its entire bug class as UNTESTED, and a
+# whole campaign's aliasing coverage is lost without a single failed command.
+RUN set -eu; \
+    mkdir -p /tmp/bsan-selftest/src; \
+    printf '%s\n' '[package]' 'name = "bsan_selftest"' 'version = "0.0.0"' \
+        'edition = "2021"' > /tmp/bsan-selftest/Cargo.toml; \
+    printf '%s\n' 'fn main() {' \
+        '    let mut x = 42u8;' \
+        '    let p = &mut x as *mut u8;' \
+        '    let r = &mut x;' \
+        '    *r = 1;' \
+        '    unsafe { *p = 7; }' \
+        '    println!("{}", x);' \
+        '}' > /tmp/bsan-selftest/src/main.rs; \
+    cd /tmp/bsan-selftest; \
+    cargo bsan run > /tmp/bsan-selftest.log 2>&1 || true; \
+    grep -q 'Undefined Behavior' /tmp/bsan-selftest.log \
+      || { echo "BSan did not fire on a known Tree Borrows violation:" >&2; \
+           cat /tmp/bsan-selftest.log >&2; exit 1; }; \
+    cd /; rm -rf /tmp/bsan-selftest /tmp/bsan-selftest.log
 
 RUN if [ "${INSTALL_CLAUDE}" = "1" ]; then \
         curl -fsSL https://claude.ai/install.sh | bash; \
@@ -98,10 +141,15 @@ ENV CRUSTIFY_VERB=orchestrate
 ENV CRUSTIFY_BACKEND=claude
 ENV CRUSTIFY_MODEL=claude-opus-5
 
+# Billing service used by that CLI. Empty selects anthropic for Claude and
+# openai for Codex. Set openrouter to drive its models through the Codex CLI.
+ENV CRUSTIFY_PROVIDER=
+
 # Headless mode cannot resolve missing mandatory TASK answers interactively.
 ENV CRUSTIFY_HEADLESS=0
 
-# codex only; the CLI accepts any string locally and rejects it at the API.
+# Codex reasoning effort for both the orchestrator and every auditor it spawns.
+# The CLI accepts any string locally and rejects unsupported values at the API.
 ENV CRUSTIFY_EFFORT=high
 
 # Not decoration: neither CLI uses an environment key on its own, so `api` adds
@@ -157,30 +205,47 @@ RUN printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' \
       '    echo "bad CRUSTIFY_VERB: ${CRUSTIFY_VERB} (orchestrate|unsafe)" >&2' \
       '    exit 2; }' \
       'case "${CRUSTIFY_BACKEND:-}" in' \
-      '    claude) backend=claude; auditor_provider=anthropic ;;' \
-      '    codex)  backend=codex;  auditor_provider=openai ;;' \
+      '    claude) backend=claude ;;' \
+      '    codex)  backend=codex ;;' \
       '    *) echo "bad CRUSTIFY_BACKEND: ${CRUSTIFY_BACKEND:-<empty>} (claude|codex)" >&2' \
       '       exit 2 ;;' \
       'esac' \
+      'case "$backend/${CRUSTIFY_PROVIDER:-}" in' \
+      '    claude/|claude/anthropic) provider=anthropic ;;' \
+      '    codex/|codex/openai)      provider=openai ;;' \
+      '    codex/openrouter)         provider=openrouter ;;' \
+      '    *) echo "bad CRUSTIFY_PROVIDER for $backend: ${CRUSTIFY_PROVIDER:-<empty>}" >&2' \
+      '       exit 2 ;;' \
+      'esac' \
+      'auditor_provider=$provider' \
       '[ -n "${CRUSTIFY_MODEL:-}" ] || {' \
       '    echo "CRUSTIFY_MODEL must name the orchestrator model" >&2; exit 2; }' \
       '# Checked here: an agent with no usable auth issues no request and exits' \
       '# 0, which reads as a hunt that found nothing.' \
       'auth=()' \
       'case "${CRUSTIFY_BILLING:-}" in' \
-      '    subscription) ;;' \
+      '    subscription)' \
+      '        [ "$provider" != openrouter ] || {' \
+      '            echo "openrouter requires CRUSTIFY_BILLING=api" >&2; exit 2; } ;;' \
       '    api|"")' \
-      '        case "$backend" in' \
-      '        claude) [ -n "${ANTHROPIC_API_KEY:-}" ] || {' \
+      '        case "$provider" in' \
+      '        anthropic) [ -n "${ANTHROPIC_API_KEY:-}" ] || {' \
       '            echo "CRUSTIFY_BILLING=api needs ANTHROPIC_API_KEY" >&2; exit 2; }' \
       '            auth=(--bare) ;;' \
-      '        codex)  [ -n "${OPENAI_API_KEY:-}" ] || {' \
+      '        openai) [ -n "${OPENAI_API_KEY:-}" ] || {' \
       '            echo "CRUSTIFY_BILLING=api needs OPENAI_API_KEY" >&2; exit 2; }' \
       '            auth=(-c "model_provider=openai_apikey"' \
       '                  -c "model_providers.openai_apikey.name=\"OpenAI\""' \
       '                  -c "model_providers.openai_apikey.base_url=\"https://api.openai.com/v1\""' \
       '                  -c "model_providers.openai_apikey.env_key=\"OPENAI_API_KEY\""' \
       '                  -c "model_providers.openai_apikey.wire_api=\"responses\"") ;;' \
+      '        openrouter) [ -n "${OPENROUTER_API_KEY:-}" ] || {' \
+      '            echo "CRUSTIFY_BILLING=api needs OPENROUTER_API_KEY" >&2; exit 2; }' \
+      '            auth=(-c "model_provider=openrouter_apikey"' \
+      '                  -c "model_providers.openrouter_apikey.name=\"OpenRouter\""' \
+      '                  -c "model_providers.openrouter_apikey.base_url=\"https://openrouter.ai/api/v1\""' \
+      '                  -c "model_providers.openrouter_apikey.env_key=\"OPENROUTER_API_KEY\""' \
+      '                  -c "model_providers.openrouter_apikey.wire_api=\"responses\"") ;;' \
       '        esac ;;' \
       '    *) echo "bad CRUSTIFY_BILLING: ${CRUSTIFY_BILLING}" >&2; exit 2 ;;' \
       'esac' \
@@ -207,7 +272,8 @@ RUN printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' \
       '  and record the revision you audit yourself, with git in /target.' \
       '- Defaults you may propose: --model' \
       '  $auditor_provider/$CRUSTIFY_MODEL, --billing' \
-      '  $CRUSTIFY_BILLING, --timeout $CRUSTIFY_TIMEOUT (minutes per auditor).' \
+      '  $CRUSTIFY_BILLING, --effort $CRUSTIFY_EFFORT, and --timeout' \
+      '  $CRUSTIFY_TIMEOUT (minutes per auditor).' \
       '- Interaction mode: $CRUSTIFY_HEADLESS (0 is interactive, 1 is' \
       '  headless).' \
       '- The crustify-audit CLI is on PATH. Spawn auditors with it. Run the' \
