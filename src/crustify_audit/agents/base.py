@@ -40,9 +40,6 @@ from __future__ import annotations
 
 import time
 
-import shutil
-import subprocess
-import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -319,62 +316,3 @@ class AuditAgent:
                "tests, and build files are edited ONLY inside a git worktree "
                "you create, never in the checkout itself.")
         )
-
-    # ------------------------------------------------------- instruments
-    #
-    # Only what the CLI warns with. WHICH instrument suits a candidate, and
-    # whether it is installed, are both the agent's to work out.
-
-    @staticmethod
-    def _ok(cmd: list[str]) -> bool:
-        try:
-            return subprocess.run(cmd, capture_output=True, text=True).returncode == 0
-        except OSError:
-            return False
-
-    @classmethod
-    def miri_available(cls) -> bool:
-        return shutil.which("cargo") is not None and cls._ok(
-            ["cargo", "+nightly", "miri", "--version"])
-
-    @classmethod
-    def bsan_available(cls) -> bool:
-        """BorrowSanitizer: Tree Borrows on a program that really links the C.
-
-        The one instrument that answers the aliasing question across the FFI
-        seam, which is where a wrapper crate's interesting behaviour lives. Its
-        absence is not fatal -- miri and the sanitizers each still answer their
-        own half -- so this only decides whether the CLI says it is missing.
-        """
-        return shutil.which("cargo") is not None and cls._ok(
-            ["cargo", "bsan", "--version"])
-
-    @staticmethod
-    def asan_ubsan_available() -> bool:
-        """Prove that clang can link and run both sanitizer runtimes.
-
-        A version check is insufficient: distro clang packages can exist
-        without compiler-rt, which fails only at the final link. This tiny
-        executable checks the same compiler/runtime seam an audit needs.
-        """
-        clang = shutil.which("clang")
-        if clang is None:
-            return False
-        source = "int main(void) { return 0; }\n"
-        try:
-            with tempfile.TemporaryDirectory(prefix="crustify-sanitizer-probe-") as tmp:
-                binary = Path(tmp) / "probe"
-                built = subprocess.run(
-                    [clang, "-x", "c", "-fsanitize=address,undefined", "-",
-                     "-o", str(binary)],
-                    input=source,
-                    capture_output=True,
-                    text=True,
-                )
-                if built.returncode != 0:
-                    return False
-                return subprocess.run(
-                    [str(binary)], capture_output=True, text=True
-                ).returncode == 0
-        except OSError:
-            return False

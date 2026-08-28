@@ -21,6 +21,9 @@ authorizes the run.
 Install the target's system dependencies and the selected instruments, then
 verify them by invocation before planning.
 
+If BSan (BorrowSanitizer) is not available, compile and install it from source according
+to the guidelines in the official repo: https://github.com/borrowSanitizer/bsan
+
 ## Plan
 
 Verify the target revision. For `audit` and `audit+patch`, run the deterministic
@@ -44,3 +47,8 @@ After they finish, summarize the advisories and leads and write the requested
 report and put it in `crustify/audit/results.md`. The report must preserve the
 resolved instrument-to-bug-class scope and
 mark selected instruments that were unavailable as untested, never clean.
+
+## Avoid leaks
+
+Do not leak any API keys in core dumps or any other reproducer artifacts
+as we might be making the audit tree open source.

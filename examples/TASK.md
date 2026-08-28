@@ -20,7 +20,7 @@ Optional answers may be left unresolved for the orchestrator to decide.
 5. **Which billing mode should agentic stages use?**
    - Answer: `<api | subscription>`
 6. **Which instruments should the auditors hunt with?**
-   - Answer: `<miri | asan/ubsan | bsan | space-separated combination>`
+   - Answer: `<miri | asan/ubsan | bsan (borrowsanitizer) | and-separated combination>`
    - `miri`: Rust-side memory, value-validity, alignment, aliasing, intrinsic,
      and data-race UB in code Miri can execute.
    - `asan/ubsan`: native out-of-bounds, lifetime/free, pointer/alignment,
@@ -36,3 +36,8 @@ Unanswered optional questions are decided by the orchestrator.
 
 7. **Where and in what format should results be recorded?**
    - Answer: `<results path>, <examples/results.md | custom template>`
+
+
+## Additional instructions
+
+Unless otherwise stated, match the structure of the given results table exactly.
