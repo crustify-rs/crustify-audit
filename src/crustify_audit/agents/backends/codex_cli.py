@@ -13,19 +13,40 @@ import subprocess
 
 from crustify_audit.agentlog import AgentLog
 
-# Codex's *built-in* openai provider authenticates from `auth.json` in
-# CODEX_HOME (what `codex login` writes) and ignores OPENAI_API_KEY in the
-# environment — it fails 401 "Missing bearer or basic authentication".
-# Declaring OpenAI as an explicit env-key provider is what makes a key usable
-# without a stored login. `wire_api` must be `responses`: codex removed Chat
-# Completions support in Feb 2026 and rejects `chat` at config load.
-_OPENAI_APIKEY = [
-    "-c", "model_provider=openai_apikey",
-    "-c", 'model_providers.openai_apikey.name="OpenAI"',
-    "-c", 'model_providers.openai_apikey.base_url="https://api.openai.com/v1"',
-    "-c", 'model_providers.openai_apikey.env_key="OPENAI_API_KEY"',
-    "-c", 'model_providers.openai_apikey.wire_api="responses"',
-]
+# Codex's built-in OpenAI provider authenticates from `auth.json` in CODEX_HOME
+# (what `codex login` writes) and ignores an API key in the environment. API
+# billing therefore declares an explicit env-key provider. OpenRouter uses the
+# same Responses wire protocol and needs its own base URL and key. `wire_api`
+# must be `responses`: current Codex rejects the removed `chat` value.
+_API_PROVIDERS = {
+    "openai": (
+        "OpenAI",
+        "https://api.openai.com/v1",
+        "OPENAI_API_KEY",
+    ),
+    "openrouter": (
+        "OpenRouter",
+        "https://openrouter.ai/api/v1",
+        "OPENROUTER_API_KEY",
+    ),
+}
+
+
+def _api_provider_args(provider: str) -> list[str]:
+    try:
+        name, base_url, env_key = _API_PROVIDERS[provider]
+    except KeyError:
+        raise SystemExit(
+            f"the codex backend cannot use provider {provider!r}.") from None
+    provider_id = f"{provider}_apikey"
+    return [
+        "-c", f"model_provider={provider_id}",
+        "-c", f'model_providers.{provider_id}.name="{name}"',
+        "-c", f'model_providers.{provider_id}.base_url="{base_url}"',
+        "-c", f'model_providers.{provider_id}.env_key="{env_key}"',
+        "-c", f'model_providers.{provider_id}.wire_api="responses"',
+    ]
+
 
 _BASE = (
     "You are running non-interactively. Work autonomously to completion; "
@@ -34,9 +55,9 @@ _BASE = (
 
 
 class CodexCliBackend:
-    def run(self, *, name, model, prompt_template, arguments,
+    def run(self, *, name, model, provider, prompt_template, arguments,
             system_preamble, work_dir, log: AgentLog,
-            billing: str = "subscription") -> None:
+            billing: str = "subscription", effort: str = "high") -> None:
         if shutil.which("codex") is None:
             raise SystemExit(
                 "the `codex` CLI is not on PATH. Install it, or pick an "
@@ -48,11 +69,23 @@ class CodexCliBackend:
             "-m", model,
             "-c", f"instructions={_BASE}\n\n{system_preamble}",
         ]
+        if effort:
+            cmd += ["-c", f'model_reasoning_effort="{effort}"']
         if billing == "api":
-            if not os.environ.get("OPENAI_API_KEY"):
+            try:
+                env_key = _API_PROVIDERS[provider][2]
+            except KeyError:
                 raise SystemExit(
-                    "--billing api needs OPENAI_API_KEY in the environment.")
-            cmd += _OPENAI_APIKEY
+                    f"the codex backend cannot use provider {provider!r}.") from None
+            if not os.environ.get(env_key):
+                raise SystemExit(
+                    f"--billing api with {provider} needs {env_key} "
+                    "in the environment.")
+            cmd += _api_provider_args(provider)
+        elif provider == "openrouter":
+            raise SystemExit(
+                "openrouter models require --billing api; Codex has no "
+                "OpenRouter subscription login.")
         cmd.append(prompt)
         proc = subprocess.Popen(
             cmd, cwd=work_dir, stdout=subprocess.PIPE,

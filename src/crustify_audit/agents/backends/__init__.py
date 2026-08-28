@@ -23,12 +23,14 @@ class Backend(Protocol):
         *,
         name: str,
         model: str,
+        provider: str,
         prompt_template: str,
         arguments: dict,
         system_preamble: str,
         work_dir: str,
         log: AgentLog,
         billing: str = "subscription",
+        effort: str = "high",
     ) -> None:
         """Drive one agent to completion.
 
@@ -38,9 +40,10 @@ class Backend(Protocol):
         replace, so each backend places the same string its own way and the
         content never diverges.
 
-        ``billing`` selects how the provider CLI authenticates, and each
-        backend applies it to the ARGV: neither CLI reads a key from the
-        environment on its own.
+        ``provider`` is the billing service parsed from ``<provider>/<model>``.
+        ``billing`` selects how that service authenticates, and each backend
+        applies it to the ARGV: neither CLI reads a key from the environment on
+        its own. ``effort`` controls Codex reasoning and is ignored by Claude.
 
         The agent runs to its own completion. Nothing here enforces a deadline
         — the run's budget is spent by :meth:`AuditAgent.run` deciding whether

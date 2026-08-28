@@ -18,9 +18,12 @@ _BASE = (
 
 
 class ClaudeCliBackend:
-    def run(self, *, name, model, prompt_template, arguments,
+    def run(self, *, name, model, provider, prompt_template, arguments,
             system_preamble, work_dir, log: AgentLog,
-            billing: str = "subscription") -> None:
+            billing: str = "subscription", effort: str = "high") -> None:
+        if provider != "anthropic":
+            raise SystemExit(
+                f"the claude backend cannot use provider {provider!r}.")
         if shutil.which("claude") is None:
             raise SystemExit(
                 "the `claude` CLI is not on PATH. Install it, or pick an "

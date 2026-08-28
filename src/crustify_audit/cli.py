@@ -1,7 +1,8 @@
 """cli.py — `crustify-audit`.
 
     crustify-audit <workspace> unsafe [--json] [--name NAME ...]
-    crustify-audit <workspace> ub     [--model M] [--billing B] [--timeout MIN]
+    crustify-audit <workspace> ub     [--model M] [--billing B] [--effort E]
+                                      [--timeout MIN]
                                       [--instruments I ...]
 
 TWO VERBS, AND THE SPLIT IS THE POINT.
@@ -30,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -118,8 +120,16 @@ def build_parser() -> argparse.ArgumentParser:
                         "from the environment. Not cosmetic and not switchable "
                         "by env var alone: claude keeps sending its stored OAuth "
                         "token unless `--bare`, and codex reads auth.json and "
-                        "401s on OPENAI_API_KEY unless the provider is declared "
-                        "with an env_key. A missing key fails at launch.")
+                        "ignores API keys unless OpenAI or OpenRouter is declared "
+                        "with an env_key. A missing provider key fails at launch; "
+                        "OpenRouter supports only `api` billing.")
+    h.add_argument("--effort",
+                   choices=("low", "medium", "high", "xhigh", "max", "ultra"),
+                   default=os.environ.get("CRUSTIFY_EFFORT") or "high",
+                   metavar="LEVEL",
+                   help="Codex reasoning effort for this auditor (default: "
+                        "CRUSTIFY_EFFORT, or high). Accepted but ignored by "
+                        "the Claude backend.")
     h.add_argument("--timeout", type=int, default=30, metavar="MINUTES",
                    dest="timeout",
                    help="Wall-clock BUDGET for the run (default 30, 0 runs one "
@@ -155,6 +165,7 @@ def _cmd_ub(layout: Layout, args) -> int:
     agent = AuditAgent(layout, model=args.model,
                        timeout_s=(args.timeout * 60) or None,
                        billing=args.billing,
+                       effort=args.effort,
                        objective=args.objective,
                        workset=args.workset,
                        instruments=args.instruments)

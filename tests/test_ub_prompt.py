@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from crustify_audit.agents.base import AuditAgent, INSTRUMENT_SPECS
 from crustify_audit.cli import build_parser
@@ -105,6 +106,19 @@ class UbPromptTests(unittest.TestCase):
         ])
 
         self.assertEqual(["miri", "bsan"], args.instruments)
+
+    def test_auditors_default_to_high_effort_and_accept_an_override(self):
+        with patch.dict("os.environ", {}, clear=True):
+            default = build_parser().parse_args(["/target", "ub"])
+        with patch.dict("os.environ", {"CRUSTIFY_EFFORT": "medium"}, clear=True):
+            inherited = build_parser().parse_args(["/target", "ub"])
+            explicit = build_parser().parse_args([
+                "/target", "ub", "--effort", "low"
+            ])
+
+        self.assertEqual("high", default.effort)
+        self.assertEqual("medium", inherited.effort)
+        self.assertEqual("low", explicit.effort)
 
     def test_orchestrator_reveals_and_records_the_resolved_scope(self):
         orchestrator = (

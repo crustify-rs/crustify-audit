@@ -140,6 +140,7 @@ class AuditAgent:
         model: str | None = None,
         timeout_s: int | None = None,
         billing: str = "subscription",
+        effort: str = "high",
         objective: str = "audit",
         workset: "Sequence[str] | None" = None,
         instruments: "Sequence[str] | None" = None,
@@ -165,6 +166,8 @@ class AuditAgent:
         #: `subscription` | `api` — see the backends, which is where it changes
         #: the argv rather than the environment.
         self.billing = billing
+        #: Codex reasoning effort. Claude has no corresponding CLI setting.
+        self.effort = effort
 
     # ------------------------------------------------------------------ run
 
@@ -205,6 +208,7 @@ class AuditAgent:
                 backend.run(
                     name=self.name,
                     model=route.model,
+                    provider=route.provider,
                     prompt_template=self._prompt(),
                     arguments=self._arguments(),
                     system_preamble=self.system_preamble(),
@@ -215,6 +219,7 @@ class AuditAgent:
                 work_dir=str(self.layout.repo),
                     log=log,
                     billing=self.billing,
+                    effort=self.effort,
                 )
             spawned += 1
             took, now = time.monotonic() - t0, time.monotonic()

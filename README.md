@@ -108,9 +108,19 @@ docker run --rm -it --name audit-target \
 The harness is installed in the image. During harness development, mount this
 checkout at `/opt/crustify-audit` to run its live sources instead.
 
-For Codex, use `CRUSTIFY_BACKEND=codex`, pass the model ID exactly as Codex
-expects it, and provide `OPENAI_API_KEY`. The model is likewise passed verbatim
-to Claude.
+For Codex against OpenAI, use `CRUSTIFY_BACKEND=codex`, pass the model ID
+exactly as Codex expects it, and provide `OPENAI_API_KEY`. To drive an
+Anthropic model through OpenRouter instead, add:
+
+```sh
+-e OPENROUTER_API_KEY \
+-e CRUSTIFY_BACKEND=codex \
+-e CRUSTIFY_PROVIDER=openrouter \
+-e CRUSTIFY_MODEL=anthropic/claude-sonnet-5
+```
+
+OpenRouter must support the Responses API for the selected model. Model IDs are
+passed verbatim to both CLIs.
 
 Before running, complete [`examples/TASK.md`](examples/TASK.md) and place it at
 the host path mounted as `/campaign/TASK.md` above. Without that mount, the
@@ -120,17 +130,19 @@ complete task.
 | variable | values | default |
 |---|---|---|
 | `CRUSTIFY_BACKEND` | `claude`, `codex` | `claude` |
+| `CRUSTIFY_PROVIDER` | `anthropic`, `openai`, `openrouter` | derived from backend |
 | `CRUSTIFY_MODEL` | backend-specific model ID | `claude-opus-5` |
 | `CRUSTIFY_BILLING` | `api`, `subscription` | `api` |
 | `CRUSTIFY_HEADLESS` | `0`, `1` | `0` |
 | `CRUSTIFY_TIMEOUT` | minutes per auditor; `0` runs one | `60` |
-| `CRUSTIFY_EFFORT` | Codex reasoning effort | `high` |
+| `CRUSTIFY_EFFORT` | Codex orchestrator and auditor reasoning effort | `high` |
 | `CRUSTIFY_VERB` | `orchestrate`, `unsafe` | `orchestrate` |
 
-`api` uses the matching environment key. `subscription` uses credentials saved
-under `/work`, which is also the persistent Cargo/build cache. Set
-`CRUSTIFY_VERB=unsafe` to run only the deterministic scan, without an agent or
-authentication.
+`api` uses `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `OPENROUTER_API_KEY` for
+the selected provider. OpenRouter requires `api`; `subscription` uses Claude or
+Codex credentials saved under `/work`, which is also the persistent Cargo/build
+cache. Set `CRUSTIFY_VERB=unsafe` to run only the deterministic scan, without
+an agent or authentication.
 
 ## Reference
 
