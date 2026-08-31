@@ -108,6 +108,42 @@ INSTRUMENT_SPECS = {
             "rules; it is not a replacement for general memory-error sanitizers."
         ),
     ),
+    "msan": InstrumentSpec(
+        label="MemorySanitizer (MSan)",
+        bug_classes=(
+            "use of uninitialized memory in a branch, an address computation, or a syscall argument",
+            "uninitialized bytes crossing the Rust/foreign boundary in either direction",
+            "reads of struct tails, padding, or buffers a foreign initializer left partly unwritten",
+            "typed reads of `MaybeUninit` storage that foreign code did not fully initialize",
+        ),
+        reach=(
+            "Executed native code in which EVERY component is instrumented: the Rust "
+            "standard library via `-Zbuild-std`, the crate, and the C/C++ it links. "
+            "Memory written by uninstrumented code reads as uninitialized, so a "
+            "partial build produces false positives rather than a clean run: rebuild "
+            "the foreign code from source and disable its hand-written assembly. "
+            "`-Zsanitizer=memory` already links the Rust MSan runtime -- do not also "
+            "pass `-fsanitize=memory` to the linker, which duplicates it and fails "
+            "the link on __ubsan symbols. It reports USES of uninitialized memory, "
+            "not copies, so a value that is copied but never read will not be "
+            "reported. Cannot share a binary with ASan or TSan; build it separately."
+        ),
+    ),
+    "tsan": InstrumentSpec(
+        label="ThreadSanitizer (TSan)",
+        bug_classes=(
+            "data races between Rust threads, foreign threads, or the two mixed",
+            "unsynchronized access through `&T` where `Send`/`Sync` is asserted by hand",
+            "races on foreign library state shared across threads, including refcounts and caches",
+            "destruction of an object while another thread still uses it",
+        ),
+        reach=(
+            "Executed Rust and C/C++ built with thread instrumentation. It reports "
+            "only races on interleavings that actually run, so a clean result means "
+            "the schedules exercised were clean, not that the type is `Sync`. Cannot "
+            "share a binary with ASan or MSan; build it separately."
+        ),
+    ),
 }
 
 INSTRUMENTS = tuple(INSTRUMENT_SPECS)
@@ -149,13 +185,16 @@ class AuditAgent:
         self.layout = layout
         self.model = model or self.model
         self.timeout_s = timeout_s
-        #: `audit` | `audit+patch` | `patch`. Only the patching objectives may
-        #: touch target source, and only inside a worktree -- which is what
-        #: keeps concurrent agents off each other's checkout.
+        #: `audit` | `audit+patch` | `patch` | `revisit`. Only the patching
+        #: objectives may touch target source, and only inside a worktree --
+        #: which is what keeps concurrent agents off each other's checkout.
         self.objective = objective
         #: Files this agent confines its hunt to. Empty means the whole crate,
         #: which is the single-agent case. A workset is what makes several
-        #: agents on one target additive rather than duplicative.
+        #: agents on one target additive rather than duplicative. Under
+        #: `revisit` these are LEAD notes, not source files: the unit of work
+        #: is a question someone already asked, so the division is over
+        #: questions rather than over the crate.
         self.workset = tuple(workset or ())
         self.instruments = tuple(dict.fromkeys(instruments or INSTRUMENTS))
         unknown = set(self.instruments) - set(INSTRUMENTS)
@@ -288,7 +327,24 @@ class AuditAgent:
         return "\n\n".join(sections)
 
     def _workset_text(self) -> str:
-        """The workset, or the sentence that says there isn't one."""
+        """The workset, or the sentence that says there isn't one.
+
+        Under `revisit` the same flag carries lead notes rather than source
+        files, so the phrasing has to change with it: a source workset bounds
+        where a bug may live, a lead workset names the questions to settle.
+        """
+        if self.objective == "revisit":
+            if not self.workset:
+                return ("Every lead in `crustify/audit/leads/` that is not "
+                        "already settled. Read them first and work the ones "
+                        "still recorded as open or unproven.")
+            listing = "\n".join(f"  {f}" for f in self.workset)
+            return ("These leads, and only these:\n\n" + listing + "\n\n"
+                    "Each names a hypothesis an earlier run could not settle. "
+                    "Re-derive it from the current source rather than from the "
+                    "note, and settle it or say precisely what is still "
+                    "missing. Other agents are working the remaining leads at "
+                    "the same time and share your `advisories/` and `leads/`.")
         if not self.workset:
             return ("The whole crate. Nothing in it is out of scope.")
         listing = "\n".join(f"  {f}" for f in self.workset)
@@ -317,6 +373,10 @@ class AuditAgent:
             + ("Your objective is `audit`: you do not modify target source, "
                "tests, or build files at all."
                if self.objective == "audit" else
+               "Your objective is `revisit`: you re-investigate leads someone "
+               "else opened and you do not modify target source, tests, or "
+               "build files at all."
+               if self.objective == "revisit" else
                "Your objective is `" + self.objective + "`: target source, "
                "tests, and build files are edited ONLY inside a git worktree "
                "you create, never in the checkout itself.")

@@ -34,7 +34,12 @@
 # does not start by building one, and stops there: what a subject needs is not
 # something this file can know, and pinning it dates the image to one target.
 
-FROM ghcr.io/borrowsanitizer/bsan:latest
+# Pinned by DIGEST, not `:latest`. This image's whole premise is that rustc,
+# bsan and clang agree on one LLVM version; a moving base silently shifts
+# bsan's LLVM out from under the matched clang compiler-rt below and there is
+# no error, only instruments that quietly stop finding things. `:latest` moved
+# once already mid-campaign. Bump this deliberately, and re-run the self-tests.
+FROM ghcr.io/borrowsanitizer/bsan@sha256:69440e3b6359f3b51ae351998dc4d408777cde23d72a6adc05ed649570cfdce0
 
 ARG PYTHON_VERSION=3.13
 # Both backends by default; either can be dropped from the image.
@@ -56,6 +61,29 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         nasm yasm autoconf automake libtool m4 python3 \
     && rm -rf /var/lib/apt/lists/*
 
+# MSan needs a C compiler whose compiler-rt MATCHES rustc's LLVM, because it is
+# the one sanitizer that tolerates no uninstrumented code: anything built
+# without it leaves shadow memory poisoned and correct reads report as
+# uninitialized. The base image has clang 20 while both Rust toolchains are
+# LLVM 23, and the bsan toolchain's own clang-23 is a rust-lang/llvm-project
+# build carrying NO compiler-rt at all -- `-fsanitize=memory` there dies on a
+# missing libclang_rt.msan.a. So install a stock LLVM 23 for its runtimes.
+# The /usr/bin/clang-23 symlink is deliberately removed: cargo-bsan resolves
+# clang by the active rustc's LLVM version, and a second clang-23 on PATH is
+# exactly how bsan ends up silently instrumenting with the wrong compiler.
+# Reach this one by its absolute path only.
+RUN install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key \
+         -o /etc/apt/keyrings/llvm.asc \
+    && echo "deb [signed-by=/etc/apt/keyrings/llvm.asc] \
+https://apt.llvm.org/plucky/ llvm-toolchain-plucky-23 main" \
+       > /etc/apt/sources.list.d/llvm-23.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends clang-23 libclang-rt-23-dev \
+    && rm -f /usr/bin/clang-23 \
+    && rm -rf /var/lib/apt/lists/*
+ENV CRUSTIFY_MSAN_CC=/usr/lib/llvm-23/bin/clang
+
 # Keep the harness Python independent of whichever Python the base image uses.
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
     && uv python install "${PYTHON_VERSION}" \
@@ -65,12 +93,53 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
 # toolchains alongside it. Stable remains the default so unqualified Cargo
 # commands do not accidentally compile targets with the custom bsan compiler;
 # BorrowSanitizer is invoked explicitly as `cargo +bsan bsan ...`.
+# `rustup toolchain install nightly` would SYNC the channel: once upstream
+# nightly moves past the base image's, it replaces the base's toolchain, and
+# that rename crosses overlayfs layers and dies with EXDEV. It is also
+# redundant -- the base ships every component below already. Add them instead,
+# which is a no-op that still fails loudly if a future base drops one, and
+# leaves rustc on the LLVM the bsan toolchain and clang-23 are matched to.
 RUN rustup toolchain install stable --component clippy \
-    && rustup toolchain install nightly \
-         --component rustc-dev --component llvm-tools --component rust-src \
-         --component miri \
+    && rustup component add --toolchain nightly \
+         rustc-dev llvm-tools rust-src miri \
     && rustup default stable \
     && cargo +nightly miri --version
+
+# MemorySanitizer and ThreadSanitizer are `-Zsanitizer=` builds, not separate
+# toolchains, so nothing extra is installed for them -- but they are only usable
+# if two things hold, and both fail late and confusingly when they do not.
+# First, the target must support them: check the target spec rather than
+# discovering it from a failed link at the end of a long build. Second, MSan
+# needs the standard library rebuilt with instrumentation, which is `-Zbuild-std`
+# over the `rust-src` component installed above; without it every std allocation
+# reads as uninitialized and the run drowns in false positives.
+RUN set -eu; \
+    spec=$(rustc +nightly -Z unstable-options --print target-spec-json \
+             --target "$(rustc -vV | sed -n 's/^host: //p')"); \
+    for s in memory thread; do \
+        echo "$spec" | grep -q "\"$s\"" \
+          || { echo "target does not support -Zsanitizer=$s" >&2; exit 1; }; \
+    done; \
+    test -d "$(rustc +nightly --print sysroot)/lib/rustlib/src/rust/library/std" \
+      || { echo "rust-src missing: -Zbuild-std cannot instrument std" >&2; exit 1; }
+
+# Prove the C half of an MSan build links and REPORTS, the same way the bsan
+# self-test does. A version string cannot distinguish a clang that merely exists
+# from one whose compiler-rt is actually present, and that difference only
+# surfaces at the final link of a long instrumented build -- or worse, as a
+# campaign that records msan as "found nothing".
+RUN set -eu; \
+    printf '%s\n' '#include <stdlib.h>' 'int main(void) {' \
+        '    int *a = malloc(sizeof(int) * 10);' \
+        '    a[5] = 0;' \
+        '    if (a[0]) return 1;' \
+        '    return 0; }' > /tmp/msan-selftest.c; \
+    "$CRUSTIFY_MSAN_CC" -fsanitize=memory -fno-omit-frame-pointer -O1 \
+        /tmp/msan-selftest.c -o /tmp/msan-selftest \
+      || { echo "msan: C link failed -- compiler-rt missing" >&2; exit 1; }; \
+    /tmp/msan-selftest 2>&1 | grep -q "use-of-uninitialized-value" \
+      || { echo "msan: built but did not report a known uninit read" >&2; exit 1; }; \
+    rm -f /tmp/msan-selftest /tmp/msan-selftest.c
 
 # `cargo bsan` (no `+bsan`) is the form anyone writes by reflex, and it fails in
 # the most misleading way available. cargo-bsan picks its clang from the ACTIVE

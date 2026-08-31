@@ -40,8 +40,9 @@ logs/              agent logs and usage records
 ```
 
 An advisory requires a safe reproducer that depends on the audited crate, calls
-its public API without writing `unsafe`, and triggers Miri, ASan/UBSan, or
-BorrowSanitizer. Anything short of that is a lead.
+its public API without writing `unsafe`, and triggers one of the selected
+instruments. Anything short of that is a lead — and a `revisit` run exists to
+settle leads once an instrument that can decide them is available.
 
 Runs accumulate. Auditors read existing advisories and leads before starting,
 so later runs extend the record instead of repeating completed investigations.
@@ -50,9 +51,9 @@ so later runs extend the record instead of repeating completed investigations.
 
 ```text
 crustify-audit REPO unsafe [--json] [--name NAME ...]
-crustify-audit REPO ub [--objective audit|audit+patch|patch]
+crustify-audit REPO ub [--objective audit|audit+patch|patch|revisit]
                        [--workset PATH ...]
-                       [--instruments miri|asan/ubsan|bsan ...]
+                       [--instruments miri|asan/ubsan|bsan|msan|tsan ...]
                        [--model PROVIDER/MODEL]
                        [--billing subscription|api]
                        [--timeout MINUTES]
@@ -61,14 +62,18 @@ crustify-audit REPO ub [--objective audit|audit+patch|patch]
 - `unsafe --json` prints the document written to `unsafe.json`.
 - `unsafe --name` adds source sites for selected C types or symbols.
 - `ub --workset` confines an auditor to specified files; omit it for the whole
-  crate.
-- `ub --instruments` constrains the hunt and advisory evidence; omit it to use
-  Miri, ASan/UBSan, and BorrowSanitizer. Before spending, the command prints the
-  exact selected instruments, their bug classes, and their reach limitations.
+  crate. Under `--objective revisit` it carries lead notes instead of source
+  files.
+- `ub --instruments` constrains the hunt and advisory evidence; omit it to
+  select all five. Before spending, the command prints the exact selected
+  instruments, their bug classes, and their reach limitations.
 - `ub --timeout` is a wall-clock budget, not a kill deadline. The current agent
   finishes even when that overshoots the budget; `0` runs one agent.
 - `audit` never edits target source. `audit+patch` and `patch` develop repairs
-  in Git worktrees.
+  in Git worktrees. `revisit` hunts nothing new: it re-investigates leads an
+  earlier campaign left open, appends a dated verdict to each, and promotes one
+  to an advisory if it now reproduces. Use it after adding an instrument that
+  can settle a hypothesis the earlier run had to leave standing.
 
 Run `crustify-audit --help` or a subcommand's `--help` for complete flag
 semantics.
@@ -80,12 +85,23 @@ semantics.
 | `miri` | Rust-side bounds and lifetime errors, uninitialized or invalid values, alignment and intrinsic violations, aliasing under Stacked/Tree Borrows, and data races |
 | `asan/ubsan` | native bounds errors, use-after-free/return/scope and invalid frees, pointer/alignment UB, integer/division/shift UB, and invalid C/C++ runtime values |
 | `bsan` | Tree Borrows aliasing across Rust and foreign code, including conflicting foreign-pointer writes and pointers invalidated by reborrows |
+| `msan` | use of uninitialized memory: branches and addresses computed from it, uninitialized bytes crossing the FFI boundary, and struct tails or buffers a foreign initializer left partly unwritten |
+| `tsan` | data races between Rust and foreign threads, unsynchronized access through `&T` where `Send`/`Sync` is hand-written, and use of an object being destroyed on another thread |
 
 These are execution-based scopes, not promises of exhaustive detection. Miri
 usually cannot execute foreign code; ASan/UBSan require the relevant native
 code and final executable to be instrumented; BorrowSanitizer specifically
 checks Rust aliasing rules. The same definitions are injected into each auditor
 prompt, so CLI selection, displayed plan, and hunt scope cannot drift.
+
+MemorySanitizer and ThreadSanitizer each need a build of their own and cannot
+share a binary with ASan/UBSan, so selecting them costs an extra build per
+auditor. MemorySanitizer additionally needs every component instrumented — the
+standard library via `-Zbuild-std` and the foreign code it links — because
+memory written by uninstrumented code reads as uninitialized; a partial build
+reports falsely rather than cleanly. They cover the two classes the other three
+cannot reach at all: ASan/UBSan does not model uninitialized memory, and no
+other instrument can decide a hand-written `unsafe impl Sync`.
 
 ## Container
 

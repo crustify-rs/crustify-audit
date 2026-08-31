@@ -45,10 +45,10 @@ def build_parser() -> argparse.ArgumentParser:
                     "`unsafe` is deterministic; `ub` drives one LLM agent over "
                     "its output.")
     p.add_argument("workspace", metavar="REPO",
-                   help="Path to the REPOSITORY to audit. The crate is the root "
-                        "when that is itself a crate, otherwise crustify/rust. "
-                        "The repo, not the crate, because auditing an FFI "
-                        "wrapper means building the C library beside it.")
+                   help="Path to the REPOSITORY to audit. The root is the "
+                        "subject; the agent locates the Rust within it. The "
+                        "repo, not the crate, because auditing an FFI wrapper "
+                        "means building the C library beside it.")
     sub = p.add_subparsers(dest="command", required=True)
 
     m = sub.add_parser(
@@ -85,7 +85,8 @@ def build_parser() -> argparse.ArgumentParser:
                     "crashed. Runs ACCUMULATE: there is no skip, and the agent "
                     "reads what earlier runs left before starting, so a second "
                     "run extends the record instead of re-deriving it.")
-    h.add_argument("--objective", choices=("audit", "audit+patch", "patch"),
+    h.add_argument("--objective",
+                   choices=("audit", "audit+patch", "patch", "revisit"),
                    default="audit",
                    help="What this run is for. `audit` (default) hunts and "
                         "writes advisories and leads, and touches nothing else "
@@ -95,21 +96,32 @@ def build_parser() -> argparse.ArgumentParser:
                         "skips the hunt and repairs advisories that are already "
                         "there. Both patching objectives develop in a git "
                         "worktree, so they still do not disturb the checkout "
-                        "other agents are reading.")
+                        "other agents are reading. `revisit` hunts nothing new: "
+                        "it re-investigates the leads named in `--workset`, "
+                        "which is what you want after adding an instrument that "
+                        "can settle a hypothesis an earlier run had to leave "
+                        "open.")
     h.add_argument("--workset", nargs="+", action="extend", default=None,
                    metavar="PATH",
                    help="Confine this agent to these files, so that agents run "
                         "in parallel against one target divide the crate "
                         "instead of duplicating each other. Paths relative to "
-                        "the repo. Omitted, the whole crate is in scope.")
+                        "the repo. Omitted, the whole crate is in scope. Under "
+                        "`--objective revisit` these are lead notes under "
+                        "`crustify/audit/leads/` rather than source files, and "
+                        "the division is over open questions rather than over "
+                        "the crate; omitted, every unsettled lead is in scope.")
     from crustify_audit.agents.base import INSTRUMENTS
     h.add_argument("--instruments", nargs="+", choices=INSTRUMENTS,
                    default=None, metavar="INSTRUMENT",
                    help="Constrain the hunt and advisory evidence to one or "
                         "more of: miri (Rust UB), asan/ubsan (native memory "
                         "and language UB), bsan (Tree Borrows aliasing across "
-                        "FFI). The resolved prompt lists the exact bug "
-                        "classes. Omitted, all are selected.")
+                        "FFI), msan (uninitialized memory), tsan (data races). "
+                        "The resolved prompt lists the exact bug classes. "
+                        "msan and tsan each need their own build and cannot "
+                        "share a binary with asan/ubsan. Omitted, all are "
+                        "selected.")
     h.add_argument("--model", default=None, metavar="PROVIDER/MODEL",
                    help="e.g. anthropic/claude-opus-5, openai/gpt-5.6. The "
                         "provider prefix selects the backend and is mandatory.")
@@ -155,7 +167,7 @@ def _cmd_unsafe(layout: Layout, args) -> int:
         print(f"[crustify-audit] unsafe -> {path}\n")
         print(M.summarize(doc))
         print(f"\n  Counts, not judgement. Next: crustify-audit "
-              f"{layout.workspace} ub")
+              f"{layout.repo} ub")
     return 0
 
 

@@ -58,7 +58,7 @@ class UbPromptTests(unittest.TestCase):
                 self.assertIn(objective, preamble)
 
     def test_hard_rule_survives_every_objective(self):
-        for objective in ("audit", "audit+patch", "patch"):
+        for objective in ("audit", "audit+patch", "patch", "revisit"):
             with self.subTest(objective=objective):
                 preamble = _agent(objective).system_preamble()
                 self.assertIn("write ONLY under", preamble)
@@ -87,7 +87,8 @@ class UbPromptTests(unittest.TestCase):
                 self.assertIn(spec.reach, scope)
                 for bug_class in spec.bug_classes:
                     self.assertIn(bug_class, scope)
-        self.assertEqual(3, scope.count("Hunt for these bug classes:"))
+        self.assertEqual(len(INSTRUMENT_SPECS),
+                         scope.count("Hunt for these bug classes:"))
 
     def test_selected_scope_is_the_only_scope_in_the_formatted_prompt(self):
         agent = _agent(instruments=["bsan"])
@@ -99,6 +100,62 @@ class UbPromptTests(unittest.TestCase):
         self.assertNotIn("AddressSanitizer +", prompt)
         self.assertIn("do not spend the run on other classes",
                       " ".join(prompt.split()))
+
+    def test_revisit_confines_the_agent_to_the_leads_it_was_given(self):
+        args = _agent("revisit",
+                      workset=["crustify/audit/leads/aes-key-uninit.md"])._arguments()
+
+        self.assertIn("crustify/audit/leads/aes-key-uninit.md", args["workset"])
+        self.assertIn("These leads, and only these", args["workset"])
+        # A lead workset bounds which QUESTIONS are in scope, not where a bug
+        # may live, so the source-workset sentence must not leak into it.
+        self.assertNotIn("must live in", args["workset"])
+
+    def test_revisit_without_a_workset_takes_every_unsettled_lead(self):
+        workset = _agent("revisit")._arguments()["workset"]
+
+        self.assertIn("Every lead", workset)
+        self.assertNotIn("whole crate", workset)
+
+    def test_revisit_settles_leads_in_place_and_starts_nothing_new(self):
+        prompt = AuditAgent._prompt(None)
+        normalized = " ".join(prompt.split())
+
+        self.assertIn("## Revisit", prompt)
+        self.assertIn("Only when your objective is `revisit`", normalized)
+        self.assertIn("Append a dated verdict to the same lead file", normalized)
+        self.assertIn("Do not open new lines of investigation", normalized)
+
+    def test_revisit_may_not_touch_the_target_and_needs_no_worktree(self):
+        preamble = _agent("revisit").system_preamble()
+
+        self.assertIn("you do not modify target source", preamble)
+        self.assertNotIn("worktree", preamble)
+
+    def test_uninitialized_memory_and_races_are_selectable(self):
+        # The two classes the original three instruments cannot reach: MSan is
+        # the only one that sees uninitialized memory, TSan the only one that
+        # can decide a hand-written `Send`/`Sync`.
+        for name in ("msan", "tsan"):
+            with self.subTest(instrument=name):
+                self.assertIn(name, INSTRUMENT_SPECS)
+                scope = _agent(instruments=[name])._arguments()["instruments"]
+                self.assertIn(INSTRUMENT_SPECS[name].reach, scope)
+
+    def test_msan_and_tsan_declare_that_they_need_their_own_build(self):
+        for name in ("msan", "tsan"):
+            with self.subTest(instrument=name):
+                reach = INSTRUMENT_SPECS[name].reach
+                self.assertIn("Cannot share a binary", reach)
+
+    def test_cli_accepts_the_revisit_objective(self):
+        args = build_parser().parse_args([
+            "/target", "ub", "--objective", "revisit",
+            "--workset", "crustify/audit/leads/a.md",
+        ])
+
+        self.assertEqual("revisit", args.objective)
+        self.assertEqual(["crustify/audit/leads/a.md"], args.workset)
 
     def test_cli_parses_multiple_instruments(self):
         args = build_parser().parse_args([

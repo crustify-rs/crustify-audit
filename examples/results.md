@@ -24,7 +24,7 @@ links the real crate.
 |---|---|---|:-:|:-:|:-:|---|
 | `<name>` | `<file>:<line>` | `<tag>` | `miri` | ✓ | | `<branch>` @ `<sha>` |
 | `<name>` | `<file>:<line>` | `<tag>` | `asan/ubsan` | | | |
-| **Σ `<n>` advisories** | | | **`miri` `<n>` · `asan/ubsan` `<n>` · `bsan` `<n>`** | **`<n>`** | **`<n>`** | **`<n>` patched** |
+| **Σ `<n>` advisories** | | | **one count per SELECTED instrument, e.g. `miri` `<n>` · `asan/ubsan` `<n>` · `bsan` `<n>` · `msan` `<n>` · `tsan` `<n>`** | **`<n>`** | **`<n>`** | **`<n>` patched** |
 
 ## Leads
 
@@ -64,11 +64,13 @@ amount.
 ## Legend
 
 - **instrument** — the selected instrument that fired on this finding, tagged
-  `miri` / `asan/ubsan` / `bsan`. One tag per row: an advisory exists because
-  something crashed, and this names what caught it. A tag missing from the whole
-  column is not a clean bill — record in Notes what each instrument was and was
-  not run against. Miri cannot reach a faulting access inside C; bsan is the one
-  that answers aliasing across that seam
+  `miri` / `asan/ubsan` / `bsan` / `msan` / `tsan`. One tag per row: an advisory
+  exists because something crashed, and this names what caught it. A tag missing
+  from the whole column is not a clean bill — record in Notes what each
+  instrument was and was not run against. Miri cannot reach a faulting access
+  inside C; bsan is the one that answers aliasing across that seam; msan is the
+  one that sees uninitialized memory, which asan/ubsan does not model at all;
+  tsan is the only one that answers a hand-written `Send`/`Sync`
 - **reported** — `✓` once the finding has been sent to its recipient, per that
   advisory's `disclosure.md`; blank means drafted but not yet sent
 - **fixed** — `✓` once a fix has landed upstream or in the audited project;

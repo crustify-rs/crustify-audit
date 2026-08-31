@@ -1,5 +1,3 @@
----
-
 Fill in every mandatory answer before a headless run. Interactively, the
 orchestrator asks for any mandatory answer left blank or in angle brackets.
 Optional answers may be left unresolved for the orchestrator to decide.

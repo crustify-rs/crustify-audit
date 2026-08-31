@@ -1,6 +1,6 @@
 Audit the Rust crate in `{workspace}` for undefined behavior reachable from
-safe code. The crate is the repository root if it contains `Cargo.toml`;
-otherwise it is `crustify/rust/`.
+safe code. The repository root is the subject; locate the
+Rust within it yourself.
 
 ## Objective
 
@@ -10,6 +10,8 @@ otherwise it is `crustify/rust/`.
 - `audit+patch`: investigate, report, and repair confirmed findings.
 - `patch`: repair the confirmed findings already in `advisories/`; do not hunt
   for new ones.
+- `revisit`: re-investigate the leads named in your workset; do not hunt for
+  new ones and do not modify the target.
 
 ## Workset
 
@@ -47,6 +49,13 @@ Store a confirmed reproducer in `advisories/<name>/` with everything needed to
 run it from a clean checkout. The advisory must identify the safe path to the
 bug and include the exact command and relevant instrument output. If you cannot
 produce this evidence, record the result as a lead, not an advisory.
+
+## Revisit
+
+Only when your objective is `revisit`. Your workset names lead files, not source
+files. A lead is a question an earlier run could not settle, and your job is to
+settle it. For each lead that you manage to reproduce with a sanitizer crash,
+promote it to and advisory and delete the lead.
 
 ## Repair
 
