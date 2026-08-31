@@ -1,3 +1,15 @@
+> **Moved to [crustify](https://github.com/crustify-rs/crustify).**
+>
+> `crustify-audit` is now one of two tools in that repository, beside the
+> translation CLI it always shared a harness with. The package is unchanged
+> (`crustify_audit`, binary `crustify-audit`); what changed is that model
+> routing, run pricing and the agent log now come from `crustify.core`
+> instead of being maintained twice. This repository is archived and its
+> history stays here.
+>
+> - tool documentation: [`docs/audit.md`](https://github.com/crustify-rs/crustify/blob/main/docs/audit.md)
+> - examples: [`examples/crustify_audit/`](https://github.com/crustify-rs/crustify/tree/main/examples/crustify_audit)
+
 # crustify-audit
 
 Audit Rust repositories—especially wrappers over C—for unsafe surface area and
