@@ -54,9 +54,9 @@ def _ensure_scan_ignored(layout: Layout) -> None:
 
 def compose(layout: Layout, names: list[str] | None = None) -> dict:
     """Scan the workspace and return the metrics document."""
-    doc: dict = {"crate_path": str(layout.workspace)}
+    doc: dict = {"crate_path": str(layout.repo)}
     try:
-        doc["counts"], entries = driver.measure(layout.workspace, names=names)
+        doc["counts"], entries = driver.measure(layout.repo, names=names)
         doc["counts_unavailable"] = None
     except driver.DriverUnavailable as e:
         # No counts rather than substitute ones: see driver.py.

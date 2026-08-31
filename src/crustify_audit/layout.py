@@ -27,37 +27,25 @@ from pathlib import Path
 ARTIFACT_DIR = "crustify/audit"
 
 
-#: Where a crustify campaign puts the Rust it emitted. Checked when the repo
-#: root is not itself a crate.
-CAMPAIGN_WORKSPACE = "crustify/rust"
-
-
 class Layout:
     """Paths for one audit, resolved from the REPO.
 
     The subject is a repository, not a bare cargo workspace, because a wrapper
     is not auditable without the thing it wraps: `ub` requires a reproduction
     that links the audited crate, which for an FFI wrapper means building the C
-    library, whose sources are in the repo — beside the Rust, not inside it. A
-    run pointed at `crustify/rust` alone had to clone the C project from
-    GitHub to get them back.
+    library, whose sources are in the repo — beside the Rust, not inside it.
 
-    So `repo` is the mount and `workspace` is the crate within it: the repo
-    root when that is itself a crate, otherwise `crustify/rust`. Artifacts hang
-    off the REPO either way, which also puts `crustify/audit/` beside
-    `crustify/rust/` rather than nested inside it.
+    The repo root IS the subject; nothing here resolves a crate within it.
+    Guessing one only ever encoded this tool's own conventions, and a subject
+    that keeps its Rust somewhere else — several crates, a workspace under a
+    subdirectory, a tree built by something other than cargo — was rejected
+    before an agent could look at it. Finding the Rust is the agent's job, and
+    it can read the tree. Artifacts still hang off the repo root.
     """
 
     def __init__(self, repo: Path) -> None:
         self.repo = Path(repo).resolve()
         self.root = self.repo / ARTIFACT_DIR
-
-    @property
-    def workspace(self) -> Path:
-        """The cargo workspace to measure and build."""
-        if (self.repo / "Cargo.toml").is_file():
-            return self.repo
-        return self.repo / CAMPAIGN_WORKSPACE
 
     # ---- `unsafe`: the deterministic half
     @property
@@ -106,6 +94,3 @@ class Layout:
     @property
     def logs(self) -> Path:
         return self.root / "logs"
-
-    def is_cargo_workspace(self) -> bool:
-        return (self.workspace / "Cargo.toml").is_file()
