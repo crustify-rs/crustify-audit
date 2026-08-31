@@ -51,13 +51,8 @@ report and put it in `crustify/audit/results.md`. The report must preserve the
 resolved instrument-to-bug-class scope and
 mark selected instruments that were unavailable as untested, never clean.
 
-Do NOT compute costs yourself, and do not state a rate card from memory. Run
-`python -m crustify_audit.log_cost <repo>/crustify/audit/logs --json` and report
-the figures it returns. It prices each request from token counts at rates
-fetched from the provider; a remembered rate card silently prices a run against
-the previous model generation, which has already put figures 3x too high into a
-published record. A model the table does not know is reported UNPRICED — carry
-that through as `n/r` rather than substituting a guess.
+Use `crustify_audit.log_cost` to compute costs, instead of memory. It prices each
+request from token counts at rates fetched from the provider.
 
 ## Avoid leaks
 
