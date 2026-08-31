@@ -93,4 +93,4 @@ class CodexCliBackend:
         for line in proc.stdout or ():
             log.write(line)
         proc.wait()
-        log.record_usage([])
+        log.record_usage([], "", provider, model)

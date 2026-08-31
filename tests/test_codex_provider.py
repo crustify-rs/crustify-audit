@@ -11,7 +11,7 @@ class _Log:
     def write(self, _line):
         pass
 
-    def record_usage(self, _usage):
+    def record_usage(self, rows, session_id="", provider="", model=""):
         pass
 
 

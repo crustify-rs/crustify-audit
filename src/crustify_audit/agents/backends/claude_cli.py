@@ -65,4 +65,4 @@ class ClaudeCliBackend:
             if evt.get("type") == "result" and "usage" in evt:
                 usage.append(evt["usage"])
         proc.wait()
-        log.record_usage(usage, session)
+        log.record_usage(usage, session, provider, model)

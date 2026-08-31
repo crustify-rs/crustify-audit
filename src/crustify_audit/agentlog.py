@@ -30,9 +30,18 @@ class AgentLog:
             self._fh.write(text)
             self._fh.flush()
 
-    def record_usage(self, rows: list[dict], session_id: str = "") -> None:
+    def record_usage(self, rows: list[dict], session_id: str = "",
+                     provider: str = "", model: str = "") -> None:
+        """Write the token record, NAMING what it should be priced against.
+
+        A rate is only meaningful together with the service and model that
+        billed it, and a file that does not say which is a file someone later
+        has to guess about. That guess is what priced a $78 run at $235.
+        """
         self.usage.write_text(json.dumps({
             "session_id": session_id,
+            "provider": provider,
+            "model": model,
             "started_at": self._started,
             "ended_at": time.time(),
             "records": rows,
